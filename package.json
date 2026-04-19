@@ -1,0 +1,17 @@
+{
+  "name": "geo-skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Skills for AI coding agents to query and publish data to the Geo knowledge graph.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/geobrowser/geo-skills.git"
+  },
+  "scripts": {
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.45.0"
+  }
+}
