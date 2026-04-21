@@ -21,22 +21,115 @@ Use this skill when the user wants to:
 
 ## Prerequisites
 
-- **SDK**: if `@geoprotocol/geo-sdk` and `@geoprotocol/grc-20` aren't already dependencies of the project, install them first — detect the package manager from the lockfile (`bun.lock` → `bun add`, `pnpm-lock.yaml` → `pnpm add`, `package-lock.json` → `npm install`, `yarn.lock` → `yarn add`). Example for Bun:
+The user's project needs **no dependencies installed**. All SDK packages live inside this skill's own directory (`<skill-dir>/node_modules/`), and the shipped CLIs (`bin/whoami.mjs`, `bin/publish-entity.mjs`) plus any ad-hoc scripts are run against that location.
+
+- **Skill dependencies (one-time, inside the skill dir)**: if `<skill-dir>/node_modules/` is missing, install once. Resolve `<skill-dir>` from the path of this SKILL.md file, then:
   ```bash
-  bun add @geoprotocol/geo-sdk @geoprotocol/grc-20
+  (cd <skill-dir> && bun install)   # or: (cd <skill-dir> && npm install)
   ```
-- **Wallet**: `GEO_PRIVATE_KEY` env var set — export from <https://www.geobrowser.io/export-wallet>. If the user hasn't exported yet, point them at that URL rather than guessing.
-- **DAO editor rights**: only needed when proposing to a DAO space (not personal spaces).
-- **Runtime**: Bun runs `.ts` files directly (`bun run <script>.ts`); Node + `tsx` / `ts-node` also works.
+  Idempotent — subsequent runs finish in <1s.
+- **Wallet key**: the user places `GEO_PRIVATE_KEY=0x...` in a file named **`.env.geo-publish`** at the **user project** root, and adds the filename to `.gitignore`. Export the key from <https://www.geobrowser.io/export-wallet>. Scripts read it via `--env-file`.
+  - **Never suggest commands that put the key in the transcript.** Do NOT tell the user to run `! echo 'GEO_PRIVATE_KEY=0x...' > .env.geo-publish`, to `export GEO_PRIVATE_KEY=...` inside the session, or to paste the key into chat. The `!` prefix and shell output both land in the conversation history.
+  - **Never suggest `export`.** The Bash tool spawns a fresh shell each call and won't inherit environment variables set in the user's interactive shell.
+  - **The correct handoff**: ask the user to create `.env.geo-publish` themselves — in their editor or a separate terminal you can't see — with a single line `GEO_PRIVATE_KEY=0x...`, and to reply "done" when ready. Then continue. You may offer to create a `.env.geo-publish.example` file (with a placeholder value) and update `.gitignore` on their behalf; never write the real file.
+- **DAO editor rights**: only needed when publishing to a DAO space (not personal spaces).
+- **Runtime**: Node 20.6+ or Bun — both natively support `--env-file`. Shipped scripts are plain `.mjs`, so no TypeScript runtime is needed.
+  - Node: `node --env-file=.env.geo-publish <skill-dir>/bin/<script>.mjs`
+  - Bun:  `bun  --env-file=.env.geo-publish run <skill-dir>/bin/<script>.mjs`
+
+## Quickstart (first publish in one script)
+
+Use this when the user just wants to try the skill and hasn't set up identity yet. It bootstraps everything from only `GEO_PRIVATE_KEY`.
+
+### 0. Ask the user to create `.env.geo-publish`
+
+If the file doesn't exist, tell the user (verbatim is fine):
+
+> Create a file at the project root called `.env.geo-publish` with one line: `GEO_PRIVATE_KEY=0x...`. Export your key from https://www.geobrowser.io/export-wallet. Use your editor or a separate terminal — don't use `!` here, since that would put the key in this conversation. Reply "done" when ready.
+
+You can proactively create `.gitignore` entries and a `.env.geo-publish.example` placeholder for them, but **never write the real key yourself**.
+
+### 1. Discover identity — `bin/whoami.mjs`
+
+`<skill-dir>/bin/whoami.mjs` derives from the private key:
+
+- **wallet address** (smart account)
+- **personal space ID** — doubles as the `author` value for every publish
+- **DAO spaces you can publish to** (editor role)
+
+Run it once from the user's project directory and show the output so they can pick a target space:
+
+```bash
+node --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs
+# or: bun --env-file=.env.geo-publish run <skill-dir>/bin/whoami.mjs
+```
+
+Expected output:
+```
+Wallet address : 0xAbC...
+Personal space : 003eaa9b7a56fa847afd6f2e8cc518a6
+Author (pass as `author`): 003eaa9b7a56fa847afd6f2e8cc518a6
+
+Spaces you can publish to as editor:
+  - 003eaa9b7a56fa847afd6f2e8cc518a6  [PERSONAL]  (your own)
+  - 0222c93092ed08632f958aa84b3b0be6  [DAO]  Crypto
+```
+
+If the personal-space row is `(none — create one before publishing)`, call `personalSpace.createSpace()` first (see `reference.md`).
+
+### 2. Confirm the plan with the user (one message)
+
+Before writing or running a publish script, surface your assumptions in ONE short message and wait for confirmation. Use this template:
+
+> Ready to publish:
+> - **Space**: `<personal space ID>` (your personal space) — change? (paste a DAO space ID from above to override)
+> - **Name**: "<name the user gave>"
+> - **Type**: `<SystemIds.XXX_TYPE>` (`Person`, `Project`, …) or `SystemIds.DEFAULT_TYPE` for a generic entity — change?
+> - **Description**: <either "(none)" or a one-sentence draft ending with a period> — change?
+>
+> Reply "go" or tell me what to change.
+
+Pick a type by matching the entity name where possible (a name like "Acme Inc." → `COMPANY_TYPE`; a person's name → `PERSON_TYPE`; something ambiguous → `DEFAULT_TYPE`). Don't invent a description the user didn't ask for — offer `(none)` as the default and let them add one if they want.
+
+Only proceed to write the script after the user confirms.
+
+### 3. Publish — `bin/publish-entity.mjs` (no script needed)
+
+For a simple "create one entity" request, use the shipped CLI instead of writing a script:
+
+```bash
+node --env-file=.env.geo-publish <skill-dir>/bin/publish-entity.mjs \
+  --name "Ada Lovelace" \
+  --description "A 19th-century mathematician." \
+  --type PERSON_TYPE
+# --space-id and --author default to the wallet's personal space
+# --dry-run prints ops count and exits without submitting
+```
+
+Known `--type` values: `DEFAULT_TYPE`, `PERSON_TYPE`, `COMPANY_TYPE`, `PROJECT_TYPE`, `EVENT_TYPE`, `INSTITUTION_TYPE`, `ROLE_TYPE`, `ARTICLE_TYPE`, `TALK_TYPE`, `PODCAST_TYPE`, `EPISODE_TYPE`, `TOPIC_TYPE`, `SKILL_TYPE`. The CLI validates the name-no-period / description-must-end-with-period rules for you.
+
+`author` defaults to the wallet's personal space ID (never a Person entity ID) — `--author` is only needed if overriding.
+
+### 4. Complex publishes — custom script that imports from the skill
+
+Relations, updates, multi-op edits, text blocks, images: write a `.mjs` script in the user's project and run it with `NODE_PATH` pointing at the skill's `node_modules` so imports resolve without a local install:
+
+```bash
+NODE_PATH=<skill-dir>/node_modules node --env-file=.env.geo-publish publish-something.mjs
+# Bun respects NODE_PATH too.
+```
+
+See `examples/create-entity.md`, `examples/create-relation.md`, `examples/update-entity.md` for patterns. All examples are `.mjs`-compatible (plain ESM) — strip the TypeScript type annotations if you copy from them for a `.mjs` file.
 
 ## The three-step workflow
 
 Every publish follows the same flow:
 
 ```
-1. Discover schema (query an existing entity of the same type)
-2. Build ops (Graph.createEntity, Graph.createRelation, etc.)
-3. Submit (personalSpace.publishAndSend or daoSpace.publishAndVote)
+1. Discover schema  (query an existing entity of the same type)
+2. Build ops        (Graph.createEntity, Graph.createRelation, ...)
+3. Submit           (personalSpace.publishEdit + wallet.sendTransaction,
+                     or daoSpace.proposeEdit + voteProposal)
 ```
 
 ### Step 1 — Discover the schema
@@ -100,45 +193,61 @@ allOps.push(...relOps);
 
 ### Step 3 — Submit
 
+Both variants return `{ to, calldata, ... }`. You submit the transaction yourself via the smart-account wallet.
+
+**Normalize the private key.** Users often paste the key without the `0x` prefix; the SDK then throws a cryptic `invalid private key, expected hex or 32 bytes, got string`. Always prepend `0x` if missing:
+
+```typescript
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw) throw new Error("GEO_PRIVATE_KEY not set. Create .env.geo-publish at the project root.");
+const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+```
+
 **Personal space (instant publish):**
 
 ```typescript
 import { personalSpace, getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
 
-const wallet = await getSmartAccountWalletClient({
-  privateKey: process.env.GEO_PRIVATE_KEY as `0x${string}`,
-});
+const wallet = await getSmartAccountWalletClient({ privateKey });
 
-const { editId, cid, txHash } = await personalSpace.publishAndSend({
+const { editId, cid, to, calldata } = await personalSpace.publishEdit({
   name: "Add Ada Lovelace",
-  spaceId: "YOUR_SPACE_ID",
+  spaceId: PERSONAL_SPACE_ID, // target space (usually your personal space)
   ops: allOps,
-  author: "YOUR_PERSON_ENTITY_ID",
-  wallet,
+  author: PERSONAL_SPACE_ID, // ALWAYS your personal space ID, not a Person entity
   network: "TESTNET",
 });
+const txHash = await wallet.sendTransaction({ to, data: calldata });
 ```
 
-**DAO space (proposal + vote):**
+**DAO space (propose + vote):**
+
+`daoSpace.proposeEdit` returns the proposal calldata; submit it, then (optionally) vote. With `votingMode: "FAST"` and enough editor approvals, the proposal auto-executes.
 
 ```typescript
 import { daoSpace, getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
 
-const wallet = await getSmartAccountWalletClient({
-  privateKey: process.env.GEO_PRIVATE_KEY as `0x${string}`,
-});
+const wallet = await getSmartAccountWalletClient({ privateKey }); // normalize as above
 
-const { proposalId, proposeTxHash, voteTxHash } = await daoSpace.publishAndVote({
+const { proposalId, editId, cid, to, calldata } = await daoSpace.proposeEdit({
   name: "Add Ada Lovelace",
   ops: allOps,
-  author: wallet.account.address,
-  wallet,
-  daoSpaceAddress: "0x..." as `0x${string}`,
-  callerSpaceId: "0x..." as `0x${string}`,
-  daoSpaceId: "0x..." as `0x${string}`,
+  author: PERSONAL_SPACE_ID, // still the user's personal space ID
+  daoSpaceAddress: "0x..." as `0x${string}`, // DAO space contract address
+  callerSpaceId: "0x..." as `0x${string}`, // your personal space ID as bytes16 hex
+  daoSpaceId: "0x..." as `0x${string}`, // DAO space ID as bytes16 hex
   votingMode: "FAST",
   network: "TESTNET",
 });
+const proposeTxHash = await wallet.sendTransaction({ to, data: calldata });
+
+// Then vote (not needed if the proposal auto-executes on propose):
+const vote = await daoSpace.voteProposal({
+  proposalId,
+  daoSpaceAddress: "0x..." as `0x${string}`,
+  vote: "YES",
+});
+const voteTxHash = await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
 ```
 
 ## Entity rules
@@ -293,7 +402,7 @@ allOps.push(...b2Ops);
 
 |            | Personal space                | DAO space                                       |
 | ---------- | ----------------------------- | ----------------------------------------------- |
-| Publishing | Instant (`publishAndSend`)    | Proposal + vote (`publishAndVote`)              |
+| Publishing | Instant (`publishEdit`)       | Proposal + vote (`proposeEdit` → `voteProposal`)|
 | Access     | Your wallet is the sole owner | Must be an editor; vote threshold 51%           |
 | Voting     | None                          | 24h slow path, or fast path (1 editor approval) |
 | Use for    | Experiments, personal data    | Shared curated spaces (Crypto, AI, etc.)        |

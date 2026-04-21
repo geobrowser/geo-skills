@@ -14,6 +14,7 @@ import {
 } from "@geoprotocol/geo-sdk";
 import type { Op } from "@geoprotocol/grc-20";
 
+const PERSONAL_SPACE_ID = "ffff..."; // from bin/whoami.mjs — doubles as author
 const PERSON_ID = "aaaa...";
 const COMPANY_ID = "bbbb...";
 const COMPANY_SPACE = "cccc..."; // space the Company lives in
@@ -49,18 +50,20 @@ async function main() {
   });
   allOps.push(...ops);
 
-  const wallet = await getSmartAccountWalletClient({
-    privateKey: process.env.GEO_PRIVATE_KEY as `0x${string}`,
-  });
+  const raw = process.env.GEO_PRIVATE_KEY;
+  if (!raw) throw new Error("GEO_PRIVATE_KEY not set (create .env.geo-publish).");
+  const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+  const wallet = await getSmartAccountWalletClient({ privateKey });
 
-  await personalSpace.publishAndSend({
+  const { to, calldata } = await personalSpace.publishEdit({
     name: "Add work history: Senior Engineer at Acme",
-    spaceId: "YOUR_PERSONAL_SPACE_ID",
+    spaceId: PERSONAL_SPACE_ID, // usually also used as `author` — see bin/whoami.mjs
     ops: allOps,
-    author: "YOUR_PERSON_ENTITY_ID",
-    wallet,
+    author: PERSONAL_SPACE_ID,
     network: "TESTNET",
   });
+  const txHash = await wallet.sendTransaction({ to, data: calldata });
+  console.log({ txHash });
 }
 
 main().catch((err) => {
