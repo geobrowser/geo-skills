@@ -13,6 +13,7 @@ import {
 } from "@geoprotocol/geo-sdk";
 import type { Op } from "@geoprotocol/grc-20";
 
+const PERSONAL_SPACE_ID = "ffff..."; // from bin/whoami.mjs — doubles as author
 const ENTITY_ID = "aaaa...";
 
 const allOps: Op[] = [];
@@ -28,18 +29,19 @@ const { ops: updateOps } = Graph.updateEntity({
 });
 allOps.push(...updateOps);
 
-const wallet = await getSmartAccountWalletClient({
-  privateKey: process.env.GEO_PRIVATE_KEY as `0x${string}`,
-});
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw) throw new Error("GEO_PRIVATE_KEY not set (create .env.geo-publish).");
+const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+const wallet = await getSmartAccountWalletClient({ privateKey });
 
-await personalSpace.publishAndSend({
+const { to, calldata } = await personalSpace.publishEdit({
   name: "Update links",
-  spaceId: "YOUR_PERSONAL_SPACE_ID",
+  spaceId: PERSONAL_SPACE_ID,
   ops: allOps,
-  author: "YOUR_PERSON_ENTITY_ID",
-  wallet,
+  author: PERSONAL_SPACE_ID,
   network: "TESTNET",
 });
+await wallet.sendTransaction({ to, data: calldata });
 ```
 
 ## Delete a relation — use the EDGE id, not the relation's entityId
@@ -99,12 +101,12 @@ allOps.push(...updateOps);
 allOps.push(...delRelOps);
 allOps.push(...createOps);
 
-await personalSpace.publishAndSend({
+const { to, calldata } = await personalSpace.publishEdit({
   name: "Reorganize profile",
-  spaceId: SPACE_ID,
+  spaceId: PERSONAL_SPACE_ID,
   ops: allOps,
-  author: AUTHOR_ID,
-  wallet,
+  author: PERSONAL_SPACE_ID,
   network: "TESTNET",
 });
+await wallet.sendTransaction({ to, data: calldata });
 ```

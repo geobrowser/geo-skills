@@ -4,12 +4,10 @@ Full SDK surface for publishing to the Geo knowledge graph. `SKILL.md` covers th
 
 ## Packages
 
-```bash
-bun add @geoprotocol/geo-sdk @geoprotocol/grc-20
-```
+Packages live inside the skill dir's own `node_modules` — the user's project has nothing installed. Custom scripts in the user's project resolve imports via `NODE_PATH=<skill-dir>/node_modules` (see SKILL.md).
 
 - `@geoprotocol/geo-sdk` — `Graph`, `Position`, `TextBlock`, `SystemIds`, `ContentIds`, `personalSpace`, `daoSpace`, `getSmartAccountWalletClient`.
-- `@geoprotocol/grc-20` — `Op` type.
+- `@geoprotocol/grc-20` — `Op` type (only needed when hand-typing op arrays; CLI uses it transparently).
 
 ## Wallet setup
 
@@ -139,36 +137,60 @@ Fractional indices. Always `generateBetween` rather than manually incrementing.
 
 ## Submission
 
-### `personalSpace.publishAndSend`
+Every submit function returns unsigned `{ to, calldata, ... }`. You submit the transaction with the wallet's own `sendTransaction`. The SDK does **not** auto-send — pairing these is always your responsibility.
+
+### Author — always the personal space ID
+
+The `author` field is the user's **personal space ID**, not a Person entity ID. Get it from `bin/whoami.mjs`. The SDK uses this value as the `authors` field in the GRC-20 Edit message that gets uploaded to IPFS.
+
+### `personalSpace.publishEdit`
 
 ```typescript
-await personalSpace.publishAndSend({
+const { editId, cid, to, calldata } = await personalSpace.publishEdit({
   name: string,                      // edit description
-  spaceId: string,                   // your personal space ID (32-hex)
+  spaceId: string,                   // target space ID (UUID or 32-hex)
   ops: Op[],
-  author: string,                    // your person entity ID
-  wallet,
-  network: "TESTNET",
-}): { editId: string; cid: string; txHash: string }
+  author: string,                    // user's personal space ID
+  network?: "TESTNET",               // default
+});
+
+const txHash = await wallet.sendTransaction({ to, data: calldata });
 ```
 
-### `daoSpace.publishAndVote`
+### `daoSpace.proposeEdit`
 
 ```typescript
-await daoSpace.publishAndVote({
+const { proposalId, editId, cid, to, calldata } = await daoSpace.proposeEdit({
   name: string,
   ops: Op[],
-  author: string,                    // wallet.account.address
-  wallet,
-  daoSpaceAddress: `0x${string}`,    // contract address of the target space
-  callerSpaceId: `0x${string}`,      // your personal space ID (bytes16 hex)
-  daoSpaceId: `0x${string}`,         // target space ID (bytes16 hex)
-  votingMode: "FAST" | "SLOW",
-  network: "TESTNET",
-}): { proposalId: string; proposeTxHash: string; voteTxHash?: string }
+  author: string,                    // user's personal space ID
+  daoSpaceAddress: `0x${string}`,    // DAO space contract address
+  callerSpaceId: `0x${string}`,      // user's personal space ID as bytes16 hex
+  daoSpaceId: `0x${string}`,         // DAO space ID as bytes16 hex
+  votingMode?: "FAST" | "SLOW",
+  network?: "TESTNET",
+});
+
+const proposeTxHash = await wallet.sendTransaction({ to, data: calldata });
 ```
 
-`FAST` = one-editor approval. `SLOW` = 24h voting, 51% threshold.
+`FAST` = one-editor approval; `SLOW` = 24h voting at 51%. With `FAST` and enough existing editor approvals the proposal auto-executes on propose — no separate vote needed.
+
+### `daoSpace.voteProposal`
+
+```typescript
+const { to, calldata } = await daoSpace.voteProposal({
+  proposalId: string,
+  daoSpaceAddress: `0x${string}`,
+  vote: "YES" | "NO" | "ABSTAIN",
+});
+
+const voteTxHash = await wallet.sendTransaction({ to, data: calldata });
+```
+
+### Other DAO actions
+
+Also exported from `daoSpace`: `createSpace`, `executeProposal`, `proposeAddMember`, `proposeRemoveMember`, `proposeRequestMembership`. Same pattern — each returns `{ to, calldata, ... }`.
 
 ## SDK ID constants
 
@@ -242,7 +264,7 @@ async function publishEntity({ dryRun = false, ...input }: { dryRun?: boolean; .
     console.log(`[dry-run] would publish ${ops.length} ops`);
     return { ops };
   }
-  return personalSpace.publishAndSend({ ops, ... });
+  return personalSpace.publishEdit({ ops, ... });
 }
 ```
 
