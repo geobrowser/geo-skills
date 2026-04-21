@@ -56,7 +56,9 @@ const TYPE_MAP = {
 const args = parseArgs(process.argv.slice(2));
 
 if (!args.name) {
-  console.error("Usage: publish-entity.mjs --name <string> [--description <string>] [--type <TYPE>] [--space-id <uuid>] [--author <uuid>] [--dry-run]");
+  console.error(
+    "Usage: publish-entity.mjs --name <string> [--description <string>] [--type <TYPE>] [--space-id <uuid>] [--author <uuid>] [--dry-run]",
+  );
   console.error(`Known --type values: ${Object.keys(TYPE_MAP).join(", ")}`);
   process.exit(2);
 }
@@ -72,14 +74,20 @@ if (args.name.endsWith(".")) {
   console.error(`Error: name must NOT end with a period. Got: "${args.name}"`);
   process.exit(2);
 }
-if (args.description !== undefined && args.description !== true && !args.description.endsWith(".")) {
+if (
+  args.description !== undefined &&
+  args.description !== true &&
+  !args.description.endsWith(".")
+) {
   console.error(`Error: description MUST end with a period. Got: "${args.description}"`);
   process.exit(2);
 }
 
 const raw = process.env.GEO_PRIVATE_KEY;
 if (!raw) {
-  console.error("GEO_PRIVATE_KEY not set. Create .env.geo-publish and re-run with --env-file=.env.geo-publish");
+  console.error(
+    "GEO_PRIVATE_KEY not set. Create .env.geo-publish and re-run with --env-file=.env.geo-publish",
+  );
   process.exit(1);
 }
 const privateKey = raw.startsWith("0x") ? raw : `0x${raw}`;
@@ -109,7 +117,9 @@ if (!args["space-id"] || !args.author) {
   }`);
   personalSpaceId = data.spaces[0]?.id ?? null;
   if (!personalSpaceId) {
-    console.error(`No personal space found for ${address}. Create one with personalSpace.createSpace() first.`);
+    console.error(
+      `No personal space found for ${address}. Create one with personalSpace.createSpace() first.`,
+    );
     process.exit(1);
   }
 }
@@ -124,7 +134,9 @@ const { id: entityId, ops } = Graph.createEntity({
 
 if (args["dry-run"]) {
   console.log(`[dry-run] would publish ${ops.length} ops`);
-  console.log(JSON.stringify({ entityId, spaceId, author, name: args.name, type: typeKey }, null, 2));
+  console.log(
+    JSON.stringify({ entityId, spaceId, author, name: args.name, type: typeKey }, null, 2),
+  );
   process.exit(0);
 }
 
@@ -138,10 +150,16 @@ const { editId, cid, to, calldata } = await personalSpace.publishEdit({
 
 const txHash = await wallet.sendTransaction({ to, data: calldata });
 
-console.log(JSON.stringify({
-  entityId,
-  editId,
-  cid,
-  txHash,
-  url: `https://www.geobrowser.io/space/${spaceId}/${entityId}`,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      entityId,
+      editId,
+      cid,
+      txHash,
+      url: `https://www.geobrowser.io/space/${spaceId}/${entityId}`,
+    },
+    null,
+    2,
+  ),
+);

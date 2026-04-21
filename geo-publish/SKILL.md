@@ -35,7 +35,7 @@ The user's project needs **no dependencies installed**. All SDK packages live in
 - **DAO editor rights**: only needed when publishing to a DAO space (not personal spaces).
 - **Runtime**: Node 20.6+ or Bun — both natively support `--env-file`. Shipped scripts are plain `.mjs`, so no TypeScript runtime is needed.
   - Node: `node --env-file=.env.geo-publish <skill-dir>/bin/<script>.mjs`
-  - Bun:  `bun  --env-file=.env.geo-publish run <skill-dir>/bin/<script>.mjs`
+  - Bun: `bun  --env-file=.env.geo-publish run <skill-dir>/bin/<script>.mjs`
 
 ## Quickstart (first publish in one script)
 
@@ -65,6 +65,7 @@ node --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs
 ```
 
 Expected output:
+
 ```
 Wallet address : 0xAbC...
 Personal space : 003eaa9b7a56fa847afd6f2e8cc518a6
@@ -82,6 +83,7 @@ If the personal-space row is `(none — create one before publishing)`, call `pe
 Before writing or running a publish script, surface your assumptions in ONE short message and wait for confirmation. Use this template:
 
 > Ready to publish:
+>
 > - **Space**: `<personal space ID>` (your personal space) — change? (paste a DAO space ID from above to override)
 > - **Name**: "<name the user gave>"
 > - **Type**: `<SystemIds.XXX_TYPE>` (`Person`, `Project`, …) or `SystemIds.DEFAULT_TYPE` for a generic entity — change?
@@ -400,12 +402,12 @@ allOps.push(...b2Ops);
 
 ## Personal vs DAO spaces
 
-|            | Personal space                | DAO space                                       |
-| ---------- | ----------------------------- | ----------------------------------------------- |
-| Publishing | Instant (`publishEdit`)       | Proposal + vote (`proposeEdit` → `voteProposal`)|
-| Access     | Your wallet is the sole owner | Must be an editor; vote threshold 51%           |
-| Voting     | None                          | 24h slow path, or fast path (1 editor approval) |
-| Use for    | Experiments, personal data    | Shared curated spaces (Crypto, AI, etc.)        |
+|            | Personal space                | DAO space                                        |
+| ---------- | ----------------------------- | ------------------------------------------------ |
+| Publishing | Instant (`publishEdit`)       | Proposal + vote (`proposeEdit` → `voteProposal`) |
+| Access     | Your wallet is the sole owner | Must be an editor; vote threshold 51%            |
+| Voting     | None                          | 24h slow path, or fast path (1 editor approval)  |
+| Use for    | Experiments, personal data    | Shared curated spaces (Crypto, AI, etc.)         |
 
 ## More
 

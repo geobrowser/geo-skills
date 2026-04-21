@@ -2,8 +2,8 @@
   "name": "geo-publish-skill",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "description": "Self-contained dependencies for the geo-publish skill. Install once inside this directory; scripts are invoked from user projects.",
+  "type": "module",
   "dependencies": {
     "@geoprotocol/geo-sdk": "^0.18.0",
     "@geoprotocol/grc-20": "^0.4.1"
