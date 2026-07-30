@@ -6,7 +6,7 @@ Before publishing entities of a type you haven't worked with — or before writi
 
 ```graphql
 {
-  entities(typeId: "86db141cf7cb471194ed39088926adb8", first: 3) {
+  entities(typeId: "484a18c5030a499cb0f2ef588ff16d50", first: 3) {
     id
     name
   }
@@ -87,11 +87,6 @@ Geo is a permissionless graph — anyone can define types and properties, and sc
 
 ## Shortcut for common types
 
-For widely-used types exported by the SDK, skip discovery and use the constants:
+For the common current fixtures, start with Person `7ed45f2bc48b419e8e4664d5ff680b0d`, Project `484a18c5030a499cb0f2ef588ff16d50`, or News story `e550fe517e904b2c8fffdf13408f5634`.
 
-```typescript
-import { SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
-// SystemIds.PERSON_TYPE, ContentIds.ARTICLE_TYPE, etc.
-```
-
-Still do discovery for property/relation IDs on those types — the SDK doesn't export everything.
+Still do discovery for property and relation IDs on those types. Type IDs alone do not describe every property or controlled-vocabulary relation an entity may use.

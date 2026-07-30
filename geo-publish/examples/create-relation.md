@@ -1,99 +1,88 @@
-# Example: create a "Worked at" relation with dates and a role
+# Example: create a current employment relation
 
-Relations in Geo are entities themselves — they can carry their own properties. This example attaches a `Worked at` relation from a Person to a Company, with a start date, end date, and a Role classification.
+This example relates a Person to a Company with `SystemIds.WORKS_AT_PROPERTY`. Optional start/end and role fields require schema discovery because SDK `0.20.1` does not export canonical IDs for every employment field.
 
-## Code
+## Discover before writing
 
-```typescript
+Query a representative employment relation and record:
+
+- The Person and Company entity IDs and their source spaces.
+- The start-date and end-date property IDs, if used.
+- The Role relation property, Role entity, and Role source space, if used.
+
+Use explicit placeholders for discovered IDs; do not substitute a similarly named SDK constant.
+
+## Build and publish
+
+The surrounding signer/client setup is identical to `create-entity.md`.
+
+```javascript
 import {
-  Graph,
+  createGeoClient,
+  createGeoWalletClient,
+  GeoTestnetConfig,
+  Ops,
   SystemIds,
-  ContentIds,
-  personalSpace,
-  getSmartAccountWalletClient,
 } from "@geoprotocol/geo-sdk";
-import type { Op } from "@geoprotocol/grc-20";
+import { privateKeyToAccount } from "viem/accounts";
 
-const PERSONAL_SPACE_ID = "ffff..."; // from bin/whoami.mjs — doubles as author
-const PERSON_ID = "aaaa...";
-const COMPANY_ID = "bbbb...";
-const COMPANY_SPACE = "cccc..."; // space the Company lives in
-const ROLE_ENGINEER = "dddd..."; // discovered role classification entity
-const ROLES_SPACE = "eeee...";
+const PERSONAL_SPACE_ID = "YOUR_PERSONAL_SPACE_ID";
+const PERSON_ID = "DISCOVERED_PERSON_ID";
+const COMPANY_ID = "DISCOVERED_COMPANY_ID";
+const COMPANY_SPACE_ID = "DISCOVERED_COMPANY_SPACE_ID";
+const START_DATE_PROPERTY_ID = "DISCOVERED_START_DATE_PROPERTY_ID";
+const END_DATE_PROPERTY_ID = "DISCOVERED_END_DATE_PROPERTY_ID";
 
-async function main() {
-  const allOps: Op[] = [];
-
-  // Deterministic relation entity ID: 16 chars from each side.
-  // Reruns of this script will target the same relation and not duplicate.
-  const relEntityId = `${PERSON_ID.slice(0, 16)}${COMPANY_ID.slice(0, 16)}`;
-
-  const { ops } = Graph.createRelation({
-    fromEntity: PERSON_ID,
-    toEntity: COMPANY_ID,
-    type: SystemIds.WORKED_AT_PROPERTY,
-    toSpace: COMPANY_SPACE, // target entity in different space
-
-    // Relation-as-entity fields:
-    entityId: relEntityId,
-    entityName: "Senior Engineer at Acme",
-    entityValues: [
-      { property: SystemIds.START_DATE_PROPERTY, type: "date", value: "2022-03-01" },
-      { property: SystemIds.END_DATE_PROPERTY, type: "date", value: "2024-11-30" },
-    ],
-    entityRelations: {
-      [ContentIds.ROLES_PROPERTY]: {
-        toEntity: ROLE_ENGINEER,
-        toSpace: ROLES_SPACE,
-      },
-    },
-  });
-  allOps.push(...ops);
-
-  const raw = process.env.GEO_PRIVATE_KEY;
-  if (!raw) throw new Error("GEO_PRIVATE_KEY not set (create .env.geo-publish).");
-  const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
-  const wallet = await getSmartAccountWalletClient({ privateKey });
-
-  const { to, calldata } = await personalSpace.publishEdit({
-    name: "Add work history: Senior Engineer at Acme",
-    spaceId: PERSONAL_SPACE_ID, // usually also used as `author` — see bin/whoami.mjs
-    ops: allOps,
-    author: PERSONAL_SPACE_ID,
-    network: "TESTNET",
-  });
-  const txHash = await wallet.sendTransaction({ to, data: calldata });
-  console.log({ txHash });
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw || !/^(?:0x)?[0-9a-fA-F]{64}$/.test(raw)) {
+  throw new Error("GEO_PRIVATE_KEY must be a 32-byte hexadecimal testnet key");
 }
+const privateKey = raw.startsWith("0x") ? raw : `0x${raw}`;
+const signer = privateKeyToAccount(privateKey);
+const geo = createGeoClient({ network: GeoTestnetConfig });
+const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig });
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+// Stable across reruns for this endpoint pair. Add your own deterministic suffix
+// when representing multiple employment periods between the same entities.
+const relationId = `${PERSON_ID.slice(0, 16)}${COMPANY_ID.slice(0, 16)}`;
+const relationEntityId = `${COMPANY_ID.slice(0, 16)}${PERSON_ID.slice(0, 16)}`;
+
+const employment = Ops.relations.create({
+  id: relationId,
+  entityId: relationEntityId,
+  fromEntity: PERSON_ID,
+  toEntity: COMPANY_ID,
+  toSpace: COMPANY_SPACE_ID,
+  type: SystemIds.WORKS_AT_PROPERTY,
+  entityName: "Engineer at Acme",
+  entityValues: [
+    { property: START_DATE_PROPERTY_ID, type: "date", value: "2022-03-01" },
+    { property: END_DATE_PROPERTY_ID, type: "date", value: "2024-11-30" },
+  ],
 });
+
+const { to, calldata } = await geo.personalSpaces.publishEdit({
+  name: "Add employment at Acme",
+  spaceId: PERSONAL_SPACE_ID,
+  author: PERSONAL_SPACE_ID,
+  ops: employment.ops,
+});
+const txHash = await wallet.sendTransaction({ to, data: calldata });
+
+console.log({ relationId: employment.id, txHash });
 ```
 
-## Why deterministic IDs matter
+Use `toSpace` when the target entity is resolved from another space. If the source context or entity versions matter, discover and supply `fromSpace`, `fromVersion`, or `toVersion` rather than guessing them.
 
-Without `entityId`, rerunning this script creates a brand-new relation entity every time. Users see duplicate "Worked at" cards and have to clean up by hand.
+## Update or delete the relation
 
-`slice(from, 16) + slice(to, 16)` gives a stable, readable ID that's unique per (from, to) pair. If you need multiple relations with the same endpoints (e.g. two stints at the same company), include a suffix: `slice(from, 16) + slice(to, 12) + "0001"`.
+```javascript
+const moved = Ops.relations.update({
+  id: relationId,
+  toSpace: NEW_COMPANY_SPACE_ID,
+});
 
-## Finding the role classification ID
-
-Roles live in a dedicated space. Discover an existing role entity before hardcoding:
-
-```graphql
-{
-  entities(
-    typeId: "ROLE_TYPE_ID"
-    filter: { name: { includesInsensitive: "engineer" } }
-    first: 10
-  ) {
-    id
-    name
-    spaceIds
-  }
-}
+const removed = Ops.relations.delete({ id: relationId });
 ```
 
-Then wire the ID (and its space) into your script.
+Publish exactly one intended operation list. An invalid or unknown relation ID is an error; an authorization or sponsorship failure must remain a failure.

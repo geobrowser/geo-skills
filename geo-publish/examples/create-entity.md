@@ -1,107 +1,123 @@
-# Example: create a Person entity and publish to a personal space
+# Example: create a Person in a personal space
 
-End-to-end: discover your identity, build an entity, publish in one transaction. Use this pattern when `bin/publish-entity.mjs` is too limited (e.g. you need `values`, `relations`, or text blocks). For a plain "create one entity", prefer the CLI — see SKILL.md Quickstart step 3.
+This example is testnet-only and uses the stable `0.20.1` client and sponsored wallet workflow.
 
-## Prereqs
+## Prepare
 
-- Skill deps installed inside the skill dir: `(cd <skill-dir> && bun install)` — one-time, idempotent.
-- `.env.geo-publish` in the user's project root contains `GEO_PRIVATE_KEY=0x...`; file is in `.gitignore`.
-- Run `node --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs` and note your **Personal space** ID — it's both the publish target and the `author` value.
-- Run this script with `NODE_PATH=<skill-dir>/node_modules node --env-file=.env.geo-publish <this-script>.mjs` (or the equivalent Bun command). No SDK install in the user's project.
-
-## Code
-
-```typescript
-// publish-person.ts
-// Run with: bun --env-file=.env.geo-publish run publish-person.ts
-import {
-  Graph,
-  SystemIds,
-  ContentIds,
-  personalSpace,
-  getSmartAccountWalletClient,
-} from "@geoprotocol/geo-sdk";
-import type { Op } from "@geoprotocol/grc-20";
-
-const PERSONAL_SPACE_ID = "YOUR_PERSONAL_SPACE_ID"; // from bin/whoami.mjs
-
-async function main() {
-  // 1. Schema discovery: Person is well-known via SystemIds.PERSON_TYPE.
-  //    For unfamiliar types, query an existing entity first (see geo-query skill).
-
-  // 2. Build ops
-  const allOps: Op[] = [];
-
-  const { id: entityId, ops: entityOps } = Graph.createEntity({
-    name: "Ada Lovelace", // no trailing period
-    description: "A 19th-century mathematician and writer.", // ends with period
-    types: [SystemIds.PERSON_TYPE],
-    values: [
-      {
-        property: ContentIds.WEB_URL_PROPERTY,
-        type: "url",
-        value: "https://en.wikipedia.org/wiki/Ada_Lovelace",
-      },
-      // { property: BIRTH_DATE_PROP, type: "date", value: "1815-12-10" },
-    ],
-  });
-  allOps.push(...entityOps);
-
-  // 3. Submit — personal space publishes instantly
-  const raw = process.env.GEO_PRIVATE_KEY;
-  if (!raw) throw new Error("GEO_PRIVATE_KEY not set (create .env.geo-publish).");
-  // Users often paste the key without 0x; the SDK errors cryptically without it.
-  const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
-  const wallet = await getSmartAccountWalletClient({ privateKey });
-
-  const { editId, cid, to, calldata } = await personalSpace.publishEdit({
-    name: "Add Ada Lovelace",
-    spaceId: PERSONAL_SPACE_ID,
-    ops: allOps,
-    author: PERSONAL_SPACE_ID, // the author field is your personal space ID, not a Person entity
-    network: "TESTNET",
-  });
-
-  const txHash = await wallet.sendTransaction({ to, data: calldata });
-
-  console.log({ entityId, editId, cid, txHash });
-  console.log(`https://www.geobrowser.io/space/${PERSONAL_SPACE_ID}/${entityId}`);
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
-```
-
-## Verifying
-
-After the tx confirms, query the entity back:
+Install the custom script's direct dependencies in its project:
 
 ```bash
-curl -s 'https://testnet-api.geobrowser.io/graphql' \
-  -H 'Content-Type: application/json' \
-  -d "{\"query\":\"{ entity(id: \\\"$ENTITY_ID\\\") { id name description types { name } } }\"}" | jq .
+npm install --save-exact @geoprotocol/geo-sdk@0.20.1 viem@2.37.6
 ```
 
-## Going to a DAO space instead
+Create a gitignored `.env.geo-publish` in a protected local secret store with a dedicated, least-privilege testnet key. Never pass the key in command arguments or expose it to fork PR CI, artifacts, or debug output. Rotate it on suspected exposure.
 
-Replace the submit block with:
+Run `bin/whoami.mjs` from the installed skill and copy the reported personal space ID into the script.
 
-```typescript
-import { daoSpace } from "@geoprotocol/geo-sdk";
+## Script
 
-const { proposalId, editId, cid, to, calldata } = await daoSpace.proposeEdit({
+```javascript
+// publish-person.mjs
+import {
+  ContentIds,
+  createGeoClient,
+  createGeoWalletClient,
+  GeoTestnetConfig,
+  Ops,
+  SystemIds,
+} from "@geoprotocol/geo-sdk";
+import { privateKeyToAccount } from "viem/accounts";
+
+const PERSONAL_SPACE_ID = "YOUR_PERSONAL_SPACE_ID";
+
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw || !/^(?:0x)?[0-9a-fA-F]{64}$/.test(raw)) {
+  throw new Error("GEO_PRIVATE_KEY must be a 32-byte hexadecimal testnet key");
+}
+const privateKey = raw.startsWith("0x") ? raw : `0x${raw}`;
+const signer = privateKeyToAccount(privateKey);
+const geo = createGeoClient({ network: GeoTestnetConfig });
+const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig });
+
+/** @type {import("@geoprotocol/geo-sdk").Op[]} */
+const allOps = [];
+
+const entity = Ops.entities.create({
+  name: "Ada Lovelace",
+  description: "A 19th-century mathematician and writer.",
+  types: [SystemIds.PERSON_TYPE],
+  values: [
+    {
+      property: ContentIds.WEB_URL_PROPERTY,
+      type: "text",
+      value: "https://en.wikipedia.org/wiki/Ada_Lovelace",
+    },
+  ],
+});
+allOps.push(...entity.ops);
+
+const { editId, cid, to, calldata } = await geo.personalSpaces.publishEdit({
+  name: "Add Ada Lovelace",
+  spaceId: PERSONAL_SPACE_ID,
+  ops: allOps,
+  author: PERSONAL_SPACE_ID,
+});
+const txHash = await wallet.sendTransaction({ to, data: calldata });
+
+console.log({ entityId: entity.id, editId, cid, txHash });
+```
+
+Run it without putting the key on the command line:
+
+```bash
+node --env-file=.env.geo-publish publish-person.mjs
+```
+
+## Verify indexing
+
+Query the returned entity ID through the current API:
+
+```graphql
+{
+  entity(id: "ENTITY_ID") {
+    id
+    name
+    description
+    types {
+      id
+      name
+    }
+  }
+}
+```
+
+POST that query to `https://api-testnet.geobrowser.io/graphql`. Treat transport errors, GraphQL errors, a failed transaction receipt, and an indexing timeout as failures rather than successful publication.
+
+## DAO variant
+
+Confirm the personal space is authorized, then query the target space's editors and `spaceVotingSetting`. Replace the personal-space submission with:
+
+```javascript
+const DAO_SPACE_ID = "YOUR_DAO_SPACE_ID";
+
+const proposal = await geo.daoSpaces.proposeEdit({
   name: "Add Ada Lovelace",
   ops: allOps,
-  author: PERSONAL_SPACE_ID, // still your personal space ID
-  daoSpaceAddress: "0x..." as `0x${string}`,
-  callerSpaceId: "0x..." as `0x${string}`,
-  daoSpaceId: "0x..." as `0x${string}`,
+  author: PERSONAL_SPACE_ID,
+  callerSpaceId: PERSONAL_SPACE_ID,
+  daoSpaceId: DAO_SPACE_ID,
   votingMode: "FAST",
-  network: "TESTNET",
 });
-const proposeTxHash = await wallet.sendTransaction({ to, data: calldata });
+await wallet.sendTransaction({ to: proposal.to, data: proposal.calldata });
+
+const vote = geo.daoSpaces.voteProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+  versionId: proposal.versionId,
+  vote: "YES",
+});
+await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
 ```
 
-Your wallet must be an editor of the DAO space. `votingMode: "FAST"` with enough existing approvals auto-executes on propose; `"SLOW"` runs a 24h vote at 51% threshold and needs a follow-up `daoSpace.voteProposal` call.
+Read the proposal's `currentVersion` and matching `proposalVersions` entry after indexing. Do not assume a fast proposal has executed merely because submission succeeded.

@@ -1,67 +1,58 @@
 #!/usr/bin/env node
 // whoami.mjs — derives wallet address, personal space, and editable DAO spaces
-// from GEO_PRIVATE_KEY. No local SDK install needed in the user's project;
-// resolves deps from this skill's own node_modules.
-//
-// Run from the user's project directory (where .env.geo-publish lives):
-//   node   --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs
-//   bun    --env-file=.env.geo-publish run <skill-dir>/bin/whoami.mjs
+// from GEO_PRIVATE_KEY. No local SDK install is needed in the user's project.
 
-import { getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const raw = process.env.GEO_PRIVATE_KEY;
-if (!raw) {
-  console.error("GEO_PRIVATE_KEY not set.");
-  console.error("Create .env.geo-publish at the project root containing: GEO_PRIVATE_KEY=0x...");
-  console.error("Then re-run with --env-file=.env.geo-publish");
-  process.exit(1);
-}
-const privateKey = raw.startsWith("0x") ? raw : `0x${raw}`;
+import {
+  createPublishingRuntime,
+  findEditableSpaces,
+  findPersonalSpaceId,
+  safeErrorMessage,
+} from "./runtime.mjs";
 
-const GQL_URL = "https://testnet-api.geobrowser.io/graphql";
+export async function runWhoami({
+  privateKey = process.env.GEO_PRIVATE_KEY,
+  logger = console,
+  runtime,
+  createRuntime = createPublishingRuntime,
+} = {}) {
+  const activeRuntime = runtime ?? createRuntime({ privateKey });
+  const { address, geo } = activeRuntime;
+  const personalSpaceId = await findPersonalSpaceId(geo, address);
+  const editableSpaces = personalSpaceId ? await findEditableSpaces(geo, personalSpaceId) : [];
 
-async function gql(query) {
-  const res = await fetch(GQL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-  const body = await res.json();
-  if (body.errors) throw new Error(JSON.stringify(body.errors));
-  return body.data;
-}
+  logger.log(`Wallet address : ${address}`);
+  logger.log(`Personal space : ${personalSpaceId ?? "(none — create one before publishing)"}`);
+  logger.log(`Author (pass as \`author\`): ${personalSpaceId ?? "(needs personal space)"}`);
+  logger.log("");
+  logger.log("Spaces you can publish to as editor:");
+  if (personalSpaceId) logger.log(`  - ${personalSpaceId}  [PERSONAL]  (your own)`);
+  for (const { space } of editableSpaces) {
+    const label = space.topic?.name ? `  ${space.topic.name}` : "";
+    logger.log(`  - ${space.id}  [${space.type}]${label}`);
+  }
+  if (!personalSpaceId && editableSpaces.length === 0) logger.log("  (none)");
 
-const wallet = await getSmartAccountWalletClient({ privateKey });
-const address = wallet.account.address;
-
-const personal = await gql(`{
-  spaces(
-    filter: { type: { is: PERSONAL }, address: { isInsensitive: "${address}" } }
-    first: 1
-  ) { id }
-}`);
-const personalSpaceId = personal.spaces[0]?.id ?? null;
-
-let editable = [];
-if (personalSpaceId) {
-  const ed = await gql(`{
-    editors(filter: { memberSpaceId: { is: "${personalSpaceId}" } }, first: 100) {
-      space { id type topic { name } }
-    }
-  }`);
-  editable = ed.editors;
+  return { address, personalSpaceId, editableSpaces };
 }
 
-console.log(`Wallet address : ${address}`);
-console.log(`Personal space : ${personalSpaceId ?? "(none — create one before publishing)"}`);
-console.log(`Author (pass as \`author\`): ${personalSpaceId ?? "(needs personal space)"}`);
-console.log("");
-console.log("Spaces you can publish to as editor:");
-if (personalSpaceId) console.log(`  - ${personalSpaceId}  [PERSONAL]  (your own)`);
-for (const { space } of editable) {
-  const label = space.topic?.name ? `  ${space.topic.name}` : "";
-  console.log(`  - ${space.id}  [${space.type}]${label}`);
+export async function mainWhoami({
+  privateKey = process.env.GEO_PRIVATE_KEY,
+  logger = console,
+  ...options
+} = {}) {
+  try {
+    await runWhoami({ ...options, privateKey, logger });
+    return 0;
+  } catch (error) {
+    logger.error(safeErrorMessage(error, privateKey));
+    return 1;
+  }
 }
-if (!personalSpaceId && editable.length === 0) {
-  console.log("  (none)");
-}
+
+const isDirectExecution =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) process.exitCode = await mainWhoami();

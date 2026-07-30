@@ -1,299 +1,327 @@
-# geo-publish — Reference
+# geo-publish — SDK 0.20.1 reference
 
-Full SDK surface for publishing to the Geo knowledge graph. `SKILL.md` covers the common path; this file is the lookup table.
+This is the detailed testnet reference for the latest-only publishing workflow. `SKILL.md` covers the shortest path.
 
-## Packages
+## Packages and runtime
 
-Packages live inside the skill dir's own `node_modules` — the user's project has nothing installed. Custom scripts in the user's project resolve imports via `NODE_PATH=<skill-dir>/node_modules` (see SKILL.md).
+The shipped CLIs use this skill's frozen dependencies. Custom Node ESM scripts resolve dependencies from their own project and must install them locally:
 
-- `@geoprotocol/geo-sdk` — `Graph`, `Position`, `TextBlock`, `SystemIds`, `ContentIds`, `personalSpace`, `daoSpace`, `getSmartAccountWalletClient`.
-- `@geoprotocol/grc-20` — `Op` type (only needed when hand-typing op arrays; CLI uses it transparently).
-
-## Wallet setup
+```bash
+npm install --save-exact @geoprotocol/geo-sdk@0.20.1 viem@2.37.6
+```
 
 ```typescript
-import { getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
+import {
+  ContentIds,
+  createGeoClient,
+  createGeoWalletClient,
+  GeoTestnetConfig,
+  Ops,
+  Position,
+  SystemIds,
+  TextBlock,
+  type Op,
+} from "@geoprotocol/geo-sdk";
+import { privateKeyToAccount } from "viem/accounts";
 
-const wallet = await getSmartAccountWalletClient({
-  privateKey: process.env.GEO_PRIVATE_KEY as `0x${string}`,
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw || !/^(?:0x)?[0-9a-fA-F]{64}$/.test(raw)) {
+  throw new Error("GEO_PRIVATE_KEY must be a 32-byte hexadecimal testnet key");
+}
+const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+const signer = privateKeyToAccount(privateKey);
+const geo = createGeoClient({ network: GeoTestnetConfig });
+const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig });
+```
+
+`GeoTestnetConfig` supplies the current API origin, chain, Ultra Relay sponsorship URL, and Contracts V2 addresses. Publishing code should not duplicate them.
+
+## Credential handling
+
+Use a dedicated, least-privilege testnet key in a protected local or manual secret store. A local `.env.geo-publish` must be gitignored. Never place the key in a command argument, repository file, fork PR CI, artifact, transcript, or debug output. Redact errors before logging and rotate the key on suspected exposure.
+
+## Entity operations
+
+### `Ops.entities.create`
+
+```typescript
+const { id, ops } = Ops.entities.create({
+  id: optionalEntityId,
+  name: "Entity name",
+  description: "A sentence ending with a period.",
+  types: [SystemIds.DEFAULT_TYPE],
+  values: [{ property: PROPERTY_ID, type: "text", value: "A value" }],
+  relations: {
+    [ContentIds.TOPICS_PROPERTY]: { toEntity: TOPIC_ID, toSpace: TOPIC_SPACE_ID },
+  },
 });
-// wallet.account.address is your smart account address
 ```
 
-Export the private key from <https://www.geobrowser.io/export-wallet>. The smart account is funded and sponsored via the testnet paymaster — no gas handling required.
+It returns `{ id, ops: Op[] }`. A supplied ID must be a valid Geo ID.
 
-Network: `"TESTNET"` (only network supported in v1).
-
-## `Graph.createEntity`
+### `Ops.entities.update`
 
 ```typescript
-Graph.createEntity({
-  name: string,                     // no trailing period
-  description?: string,              // must end with period
-  types: string[],                   // at least one type entity ID
-  cover?: string,                    // entity ID of a cover image
-  values?: PropertyValueParam[],
-  relations?: Record<string, RelationParam | RelationParam[]>,
-}): { id: string; ops: Op[] }
+const { ops } = Ops.entities.update({
+  id: entityId,
+  name: "Updated name",
+  values: [{ property: PROPERTY_ID, type: "text", value: "Updated value" }],
+  unset: [{ property: OLD_PROPERTY_ID }],
+});
 ```
 
-### `PropertyValueParam`
+Omitting `language` from an `unset` entry clears all language slots for that property.
+
+### `geo.entities.delete`
+
+Entity deletion is a configured async workflow because the SDK fetches current values and relations in the specified space:
 
 ```typescript
-{ property: string, type: ValueType, value: unknown }
+const { ops: deleteOps } = await geo.entities.delete({ id: entityId, spaceId });
+if (deleteOps.length === 0) {
+  console.log("Nothing to delete in this space");
+} else {
+  const { to, calldata } = await geo.personalSpaces.publishEdit({
+    name: "Delete entity",
+    ops: deleteOps,
+    author: PERSONAL_SPACE_ID,
+    spaceId,
+  });
+  await wallet.sendTransaction({ to, data: calldata });
+}
 ```
 
-| `type`       | value shape                    |
-| ------------ | ------------------------------ |
-| `"text"`     | `string`                       |
-| `"date"`     | `"YYYY-MM-DD"`                 |
-| `"datetime"` | `"YYYY-MM-DDTHH:MM:SSZ"`       |
-| `"time"`     | `"HH:MM:SS"`                   |
-| `"integer"`  | `number` (int)                 |
-| `"float"`    | `number`                       |
-| `"decimal"`  | `string` (arbitrary precision) |
-| `"boolean"`  | `boolean`                      |
-| `"url"`      | `string` (full URL)            |
+The helper may return an empty list if the entity is absent. Do not publish that empty list. The operation is scoped to `spaceId`; it makes no claim about copies or references elsewhere.
 
-## `Graph.createRelation`
+## Relation operations
 
 ```typescript
-Graph.createRelation({
-  fromEntity: string,
-  toEntity: string,
-  type: string,                      // relation type (property) ID
-  toSpace?: string,                  // if toEntity lives in a different space
-  position?: string,                 // fractional index, for ordered collections
-  entityId?: string,                 // deterministic ID for the relation entity
-  entityName?: string,
-  entityDescription?: string,
-  entityValues?: PropertyValueParam[],
-  entityRelations?: Record<string, RelationParam | RelationParam[]>,
-}): { id: string; ops: Op[] }
-```
-
-The `entity*` fields turn the relation into an entity with its own properties (e.g. a "Worked at" relation with start/end dates). Use a deterministic `entityId` (`slice(from, 16) + slice(to, 16)`) so reruns don't create duplicates.
-
-## `Graph.updateEntity`
-
-```typescript
-Graph.updateEntity({
-  id: string,
-  name?: string,
-  description?: string,
-  values?: PropertyValueParam[],     // add or overwrite
-  unset?: { property: string }[],    // clear a value
-}): { ops: Op[] }
-```
-
-## `Graph.deleteRelation`
-
-```typescript
-Graph.deleteRelation({ id: string }): { ops: Op[] }
-// id is the relation EDGE id (GraphQL `relations.nodes[].id`), NOT entityId.
-```
-
-## `Graph.deleteEntity`
-
-```typescript
-Graph.deleteEntity({ id: string }): { ops: Op[] }
-```
-
-Also deletes **incoming relations** (backlinks). When deleting many entities in one batch, pass a shared `deletingIds: Set<string>` through your helper to prevent infinite recursion on cycles and duplicate orphan cleanup.
-
-## `Graph.createImage`
-
-```typescript
-await Graph.createImage({
-  url?: string,                      // remote URL to fetch
-  blob?: Blob,                       // or a local Blob
-  name: string,
-  network: "TESTNET",
-}): { id: string; ops: Op[]; cid: string }
-```
-
-Uploads to IPFS via the SDK. Attach as cover/avatar via a relation to `ContentIds.AVATAR_PROPERTY` or `SystemIds.COVER_PROPERTY`.
-
-## `TextBlock.make`
-
-```typescript
-TextBlock.make({
-  fromId: string,                    // parent entity
-  text: string,                      // one paragraph
-  position: string,                  // Position.default() or Position.after(prev)
-}): { ops: Op[]; position: string }
-```
-
-## `Position`
-
-```typescript
-Position.default(): string                        // first position ("a")
-Position.after(prev: string): string              // right after prev
-Position.before(next: string): string
-Position.generateBetween(prev: string | null, next: string | null): string
-```
-
-Fractional indices. Always `generateBetween` rather than manually incrementing.
-
-## Submission
-
-Every submit function returns unsigned `{ to, calldata, ... }`. You submit the transaction with the wallet's own `sendTransaction`. The SDK does **not** auto-send — pairing these is always your responsibility.
-
-### Author — always the personal space ID
-
-The `author` field is the user's **personal space ID**, not a Person entity ID. Get it from `bin/whoami.mjs`. The SDK uses this value as the `authors` field in the GRC-20 Edit message that gets uploaded to IPFS.
-
-### `personalSpace.publishEdit`
-
-```typescript
-const { editId, cid, to, calldata } = await personalSpace.publishEdit({
-  name: string,                      // edit description
-  spaceId: string,                   // target space ID (UUID or 32-hex)
-  ops: Op[],
-  author: string,                    // user's personal space ID
-  network?: "TESTNET",               // default
+const created = Ops.relations.create({
+  id: optionalRelationId,
+  fromEntity,
+  toEntity,
+  type: relationTypeId,
+  fromSpace: optionalFromSpaceId,
+  toSpace: optionalToSpaceId,
+  position: Position.generate(),
+  entityName: "Optional relation entity",
+  entityValues: [{ property: PROPERTY_ID, type: "date", value: "2026-07-30" }],
 });
 
+const updated = Ops.relations.update({
+  id: created.id,
+  position: Position.generateBetween(previousPosition, nextPosition),
+  toSpace: newTargetSpaceId,
+});
+
+const removed = Ops.relations.delete({ id: created.id });
+```
+
+All three return `{ id, ops: Op[] }`. Use the relation ID returned by the builder or the relation `id` returned by GraphQL.
+
+## Typed values
+
+Each entry combines `property` with one typed value shape:
+
+| Type       | Shape or example                                                              |
+| ---------- | ----------------------------------------------------------------------------- |
+| `text`     | `{ type: "text", value: "including https://example.com" }`                    |
+| `boolean`  | `{ type: "boolean", value: true }`                                            |
+| `integer`  | `{ type: "integer", value: 42n }`                                             |
+| `float`    | `{ type: "float", value: 3.14 }`                                              |
+| `decimal`  | `{ type: "decimal", exponent: -2, mantissa: { type: "i64", value: 12345n } }` |
+| `date`     | `{ type: "date", value: "2026-07-30" }`                                       |
+| `time`     | `{ type: "time", value: "14:30:00Z" }`                                        |
+| `datetime` | `{ type: "datetime", value: "2026-07-30T14:30:00+02:00" }`                    |
+| `bytes`    | `{ type: "bytes", value: new Uint8Array([1, 2]) }`                            |
+| `point`    | `{ type: "point", lon: 16.3738, lat: 48.2082 }`                               |
+| `schedule` | `{ type: "schedule", value: "FREQ=WEEKLY;BYDAY=MO" }`                         |
+
+For a decimal outside the signed 64-bit range, encode the mantissa as `{ type: "big", bytes: Uint8Array }`. The exponent is a base-10 scale; for example, exponent `-2` and mantissa `12345n` represent `123.45`.
+
+URLs use `text`. Time and datetime values include `Z` or an explicit offset.
+
+## Text blocks and positions
+
+`TextBlock.make` returns `Op[]`, not a result object:
+
+```typescript
+const firstPosition = Position.generate();
+const firstBlockOps = TextBlock.make({
+  fromId: entityId,
+  text: "First paragraph.",
+  position: firstPosition,
+});
+
+const nextPosition = Position.generateBetween(firstPosition, null);
+const nextBlockOps = TextBlock.make({
+  fromId: entityId,
+  text: "Second paragraph.",
+  position: nextPosition,
+});
+
+const ops: Op[] = [...firstBlockOps, ...nextBlockOps];
+```
+
+`Position.generateBetween(left, right)` inserts between two known positions. Pass `null` for an open side.
+
+## Images
+
+```typescript
+const image = await geo.images.create({
+  url: "https://example.com/cover.png",
+  name: "Cover image",
+  description: "The entity cover image.",
+});
+
+const attachment = Ops.relations.create({
+  fromEntity: entityId,
+  toEntity: image.id,
+  type: ContentIds.AVATAR_PROPERTY,
+});
+
+const ops: Op[] = [...image.ops, ...attachment.ops];
+```
+
+The configured image workflow uploads the source and returns the image entity ID, CID, optional dimensions, and operations.
+
+## Personal spaces
+
+### Create a personal space
+
+```typescript
+const creation = geo.personalSpaces.create({
+  name: "My personal space",
+  accountAddress: signer.address,
+});
+await wallet.sendTransaction({ to: creation.to, data: creation.calldata });
+```
+
+### Publish an edit
+
+```typescript
+const { editId, cid, to, calldata } = await geo.personalSpaces.publishEdit({
+  name: "Create entity",
+  spaceId: PERSONAL_SPACE_ID,
+  ops,
+  author: PERSONAL_SPACE_ID,
+});
 const txHash = await wallet.sendTransaction({ to, data: calldata });
 ```
 
-### `daoSpace.proposeEdit`
+The author is a personal space ID, not a Person entity ID or wallet address. Do not submit when `ops.length === 0`.
+
+## DAO spaces and Contracts V2
+
+### Inspect governance before proposing
+
+```graphql
+{
+  space(id: "DAO_SPACE_ID") {
+    id
+    editors(first: 20) {
+      nodes {
+        memberSpaceId
+      }
+    }
+    spaceVotingSetting {
+      quorum
+      duration
+      partialPercentageSupportThreshold
+      universalPercentageSupportThreshold
+      flatSupportThreshold
+      disableFastPathAccessForNewMembers
+      executionGracePeriod
+    }
+    proposals(first: 5) {
+      id
+      currentVersion
+      proposalVersions(first: 5) {
+        proposalVersion
+        votingMode
+        yesCount
+        noCount
+        abstainCount
+      }
+    }
+  }
+}
+```
+
+Editor identity is `memberSpaceId`. Read the current voting settings instead of assuming threshold, duration, or fast-path access.
+
+### Propose and vote
 
 ```typescript
-const { proposalId, editId, cid, to, calldata } = await daoSpace.proposeEdit({
-  name: string,
-  ops: Op[],
-  author: string,                    // user's personal space ID
-  daoSpaceAddress: `0x${string}`,    // DAO space contract address
-  callerSpaceId: `0x${string}`,      // user's personal space ID as bytes16 hex
-  daoSpaceId: `0x${string}`,         // DAO space ID as bytes16 hex
-  votingMode?: "FAST" | "SLOW",
-  network?: "TESTNET",
+const proposal = await geo.daoSpaces.proposeEdit({
+  name: "Create entity",
+  ops,
+  author: PERSONAL_SPACE_ID,
+  callerSpaceId: PERSONAL_SPACE_ID,
+  daoSpaceId: DAO_SPACE_ID,
+  votingMode: "FAST",
 });
+await wallet.sendTransaction({ to: proposal.to, data: proposal.calldata });
 
-const proposeTxHash = await wallet.sendTransaction({ to, data: calldata });
-```
-
-`FAST` = one-editor approval; `SLOW` = 24h voting at 51%. With `FAST` and enough existing editor approvals the proposal auto-executes on propose — no separate vote needed.
-
-### `daoSpace.voteProposal`
-
-```typescript
-const { to, calldata } = await daoSpace.voteProposal({
-  proposalId: string,
-  daoSpaceAddress: `0x${string}`,
-  vote: "YES" | "NO" | "ABSTAIN",
+const vote = geo.daoSpaces.voteProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+  versionId: proposal.versionId,
+  vote: "YES",
 });
-
-const voteTxHash = await wallet.sendTransaction({ to, data: calldata });
+await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
 ```
 
-### Other DAO actions
+`proposeEdit` returns `proposalId` and `versionId` together with the edit identifiers and transaction fields. When reading the result from the API, match `currentVersion` to `proposalVersions[].proposalVersion`. Use the returned version when voting. No DAO address belongs in caller input.
 
-Also exported from `daoSpace`: `createSpace`, `executeProposal`, `proposeAddMember`, `proposeRemoveMember`, `proposeRequestMembership`. Same pattern — each returns `{ to, calldata, ... }`.
+For a proposal update, set `updateProposal: true`, retain its `proposalId`, and supply the intended `versionId` when required. Membership, editor, voting-settings, and execution methods use `authorSpaceId` and `spaceId`.
 
-## SDK ID constants
+## Exported IDs and schema discovery
 
-```typescript
-import { SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
-```
+Only reference an SDK constant after checking the `0.20.1` export. The supported categories are `DEFAULT`, `PERSON`, `COMPANY`, `PROJECT`, `ROLE`, `ARTICLE`, `TOPIC`, and `SKILL`; the simple publishing CLI maps its `_TYPE` values to these exports:
 
-### Types
-
-```
+```text
+SystemIds.DEFAULT_TYPE
 SystemIds.PERSON_TYPE
 SystemIds.COMPANY_TYPE
 SystemIds.PROJECT_TYPE
-SystemIds.EVENT_TYPE
-SystemIds.INSTITUTION_TYPE
-SystemIds.IMAGE_TYPE
-SystemIds.VIDEO_TYPE
 SystemIds.ROLE_TYPE
 ContentIds.ARTICLE_TYPE
-ContentIds.TALK_TYPE
-ContentIds.PODCAST_TYPE
-ContentIds.EPISODE_TYPE
 ContentIds.TOPIC_TYPE
 ContentIds.SKILL_TYPE
 ```
 
-### Properties
+Common current relation/property exports used by these guides:
 
-```
-ContentIds.WEBSITE_PROPERTY
-ContentIds.X_PROPERTY
+```text
+SystemIds.WORKS_AT_PROPERTY
+SystemIds.COVER_PROPERTY
+ContentIds.AVATAR_PROPERTY
+ContentIds.AUTHORS_PROPERTY
 ContentIds.GITHUB_PROPERTY
 ContentIds.LINKEDIN_PROPERTY
+ContentIds.ROLES_PROPERTY
+ContentIds.SKILLS_PROPERTY
+ContentIds.TOPICS_PROPERTY
+ContentIds.WEBSITE_PROPERTY
 ContentIds.WEB_URL_PROPERTY
-ContentIds.PUBLISH_DATE_PROPERTY
-ContentIds.AVATAR_PROPERTY
-SystemIds.COVER_PROPERTY
-SystemIds.START_DATE_PROPERTY
-SystemIds.END_DATE_PROPERTY
-SystemIds.DATE_FOUNDED_PROPERTY
-SystemIds.MARKDOWN_CONTENT
+ContentIds.X_PROPERTY
 ```
 
-### Relations
+For a field without an exported canonical property—birth date and employment start/end dates, for example—query a representative entity, capture the property ID and source space, and use an explicit placeholder such as `START_DATE_PROPERTY_ID`. Never substitute a similarly named constant.
 
-```
-SystemIds.WORKS_AT_PROPERTY         // Person → Company (current)
-SystemIds.WORKED_AT_PROPERTY        // Person → Company (past)
-SystemIds.STUDIED_AT_PROPERTY       // Person → Institution
-SystemIds.TEAM_MEMBERS_PROPERTY     // Company → Person
-SystemIds.SPEAKERS_PROPERTY         // Talk/Episode → Person
-SystemIds.CREATOR_PROPERTY          // Entity → Person
-ContentIds.AUTHORS_PROPERTY         // Article → Person
-ContentIds.ROLES_PROPERTY           // Work relation → Role
-ContentIds.SKILLS_PROPERTY          // Person → Skill
-ContentIds.TOPICS_PROPERTY          // Entity → Topic
-ContentIds.LOCATION_PROPERTY        // Entity → Place
-```
+## Failure paths
 
-## Patterns
+| Symptom                             | Meaning                                                 | Response                                                                |
+| ----------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Missing or malformed key            | No safe signer can be constructed                       | Fail before creating a client or wallet.                                |
+| No personal space                   | Signer cannot author the normal workflow                | Create one or stop; do not use a Person entity as author.               |
+| Empty operation list                | Nothing can be published                                | Return a no-op result; do not call an edit method.                      |
+| Not authorized for DAO              | Signer's personal space lacks the required role or vote | Stop and correct authorization; do not report a skip.                   |
+| Sponsorship or receipt failure      | The write did not complete                              | Fail closed and keep the transaction/edit IDs for diagnosis.            |
+| Proposal version changed            | A vote may target stale governance state                | Re-query `currentVersion` and compare it with the intended `versionId`. |
+| Entity absent during deletion       | `geo.entities.delete` can return no operations          | Treat it as an idempotent no-op in that space.                          |
+| Unknown property or relation schema | No trustworthy exported or discovered ID is available   | Discover the schema; never invent the ID.                               |
 
-### Dry-run helper
-
-Wrap mutation helpers to support a `dryRun` mode. Collect ops but don't submit:
-
-```typescript
-async function publishEntity({ dryRun = false, ...input }: { dryRun?: boolean; ... }) {
-  const ops: Op[] = [];
-  // ... build ops ...
-  if (dryRun) {
-    console.log(`[dry-run] would publish ${ops.length} ops`);
-    return { ops };
-  }
-  return personalSpace.publishEdit({ ops, ... });
-}
-```
-
-Useful for review before committing to a DAO proposal.
-
-### Property registry for bulk imports
-
-Define a field → property-ID map so you only declare types once:
-
-```typescript
-const VALUE_PROPERTIES: Record<string, { id: string; type: "text" | "date" | "url" }> = {
-  web_url: { id: ContentIds.WEB_URL_PROPERTY, type: "url" },
-  birth_date: { id: BIRTH_DATE_PROPERTY, type: "date" },
-};
-
-function extractValues(data: Record<string, any>) {
-  return Object.entries(VALUE_PROPERTIES)
-    .filter(([field]) => data[field] != null)
-    .map(([field, meta]) => ({ property: meta.id, type: meta.type, value: data[field] }));
-}
-```
-
-## Troubleshooting
-
-| Symptom                                | Likely cause                            | Fix                                                          |
-| -------------------------------------- | --------------------------------------- | ------------------------------------------------------------ |
-| `not an editor`                        | Wallet isn't an editor of the DAO space | Get added as editor, or use a personal space.                |
-| Duplicate entries after rerun          | Non-deterministic relation entity IDs   | Use `entityId: slice(from, 16) + slice(to, 16)`.             |
-| UI drops content after first paragraph | Multiple paragraphs in one `TextBlock`  | One paragraph per block, use `Position.after(...)` to chain. |
-| `name must not end with period`        | Trailing period on `name`               | Strip it; put the period on `description` instead.           |
-| `description must end with period`     | Missing period on `description`         | Add one.                                                     |
-| Relation deleted wrong thing           | Used `entityId` as the delete target    | Use `id` (the edge ID from GraphQL).                         |
+Live writes use a dedicated testnet signer and a protected manual release environment. Deterministic CI should exercise parsing and contracts without loading a real key.

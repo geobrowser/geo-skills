@@ -22,16 +22,16 @@ Use this skill when the user wants to:
 
 ## API basics
 
-- **Endpoint:** `https://testnet-api.geobrowser.io/graphql`
+- **Endpoint:** `https://api-testnet.geobrowser.io/graphql`
 - **Method:** `POST` with `Content-Type: application/json`
 - **Auth:** none required for reads.
-- **UUIDs:** 32-char hex, no dashes (e.g. `4faff0b210cb49958e20109409b8699c`).
+- **UUIDs:** 32-char hex, no dashes (e.g. `7ed45f2bc48b419e8e4664d5ff680b0d`).
 - **Browser links:** `https://www.geobrowser.io/space/{spaceId}/{entityId}`.
 
 ## Core concepts (compact)
 
 - **Entity:** a unique node in the graph (person, place, article, etc.). Has an ID, `name`, `description`, `types`, `values`, and `relations`.
-- **Property:** a typed attribute on an entity (`text`, `date`, `boolean`, `decimal`, `integer`, `float`, `url`).
+- **Property:** a typed attribute on an entity (`text`, `date`, `datetime`, `time`, `boolean`, `decimal`, `integer`, `float`).
 - **Relation:** a typed edge between two entities. Relations are themselves entities — they can have their own properties.
 - **Type:** a category (`Person`, `Article`, …). Types define a schema of default properties that every entity of that type inherits.
 - **Space:** an independent community/topic scope. An entity can live in multiple spaces; each has its own perspective.
@@ -143,6 +143,56 @@ Values come back as typed fields (`text`, `date`, `boolean`, `decimal`, `integer
 }
 ```
 
+### Inspect a space, its editors, and governance
+
+`editors` is a connection. `proposals` and each proposal's `proposalVersions` are flat lists:
+
+```graphql
+{
+  space(id: "a19c345ab9866679b001d7d2138d88a1") {
+    id
+    type
+    topic {
+      id
+      name
+    }
+    editors(first: 20) {
+      nodes {
+        memberSpaceId
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+    spaceVotingSetting {
+      quorum
+      duration
+      partialPercentageSupportThreshold
+      universalPercentageSupportThreshold
+      flatSupportThreshold
+      disableFastPathAccessForNewMembers
+      executionGracePeriod
+    }
+    proposals(first: 5) {
+      id
+      currentVersion
+      proposalVersions(first: 5) {
+        proposalVersion
+        votingMode
+        quorum
+        threshold
+        yesCount
+        noCount
+        abstainCount
+      }
+    }
+  }
+}
+```
+
+Editors are identified by their personal or DAO `memberSpaceId`, not by an account address. For a proposal, use `currentVersion` to identify the active version and include `proposalVersion` when reading version-aware votes.
+
 ### Cursor pagination loop (TypeScript)
 
 ```typescript
@@ -155,7 +205,7 @@ async function fetchAll(
 
   while (true) {
     const afterClause = cursor ? `after: "${cursor}"` : "";
-    const res = await fetch("https://testnet-api.geobrowser.io/graphql", {
+    const res = await fetch("https://api-testnet.geobrowser.io/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -167,7 +217,9 @@ async function fetchAll(
       }`,
       }),
     });
-    const { data } = await res.json();
+    if (!res.ok) throw new Error(`Geo API returned HTTP ${res.status}`);
+    const { data, errors } = await res.json();
+    if (errors?.length) throw new Error(errors.map(({ message }) => message).join("; "));
     const conn = data.entitiesConnection;
     out.push(...(conn?.nodes ?? []));
     if (!conn?.pageInfo?.hasNextPage) break;
@@ -192,9 +244,9 @@ The `filter` arg accepts `EntityFilter` for field-level conditions:
 
 Common `EntityFilter` fields:
 
-- `id` — `UUIDFilter` (uses `is` / `isNot` / `in`; NOT `equalTo`).
-- `name`, `description`, `createdAt`, `updatedAt` — `StringFilter` (`startsWithInsensitive`, `includesInsensitive`, `equalTo`).
-- `spaceIds`, `typeIds` — `UUIDListFilter` (`anyEqualTo`).
+- `id` — `UUIDFilter` (`is`, `isNot`, `in`, `notIn`).
+- `name`, `description`, `createdAt`, `updatedAt` — `StringFilter` (`is`, `isNot`, `in`, `notIn`, `includes`, `includesInsensitive`, `startsWith`, and related operators).
+- `spaceIds`, `typeIds` — `UUIDListFilter` (`is`, `isNot`, `in`, `containedBy`, `overlaps`, `anyEqualTo`).
 - `relations`, `backlinks` — `EntityToManyRelationFilter` (`some`, `none`, `every`).
 - `values` — `EntityToManyValueFilter`.
 - `and`, `or`, `not`.
@@ -294,33 +346,26 @@ For relation types, inspect an entity that uses them — the `type { id name }` 
 
 ## Well-known IDs
 
-Prefer the SDK's exported constants where possible:
-
-```typescript
-import { SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
-
-(SystemIds.PERSON_TYPE, SystemIds.COMPANY_TYPE, SystemIds.PROJECT_TYPE, SystemIds.EVENT_TYPE);
-(ContentIds.ARTICLE_TYPE, ContentIds.TALK_TYPE, ContentIds.PODCAST_TYPE, ContentIds.TOPIC_TYPE);
-```
-
-Common raw IDs (for GraphQL queries):
+Current raw IDs for direct GraphQL queries:
 
 | Name            | ID                                 |
 | --------------- | ---------------------------------- |
 | Type (meta)     | `e7d737c536764c609fa16aa64a8c90ad` |
 | Property (meta) | `808a04ceb21c4d888ad12e240613e5ca` |
-| Person          | `4faff0b210cb49958e20109409b8699c` |
-| Article         | `a2a5ed0cacef46b1835de457956ce915` |
-| Topic           | `5ef5a5860f274d8e8f6c59ae5b3e89e2` |
+| Person          | `7ed45f2bc48b419e8e4664d5ff680b0d` |
+| Project         | `484a18c5030a499cb0f2ef588ff16d50` |
+| News story      | `e550fe517e904b2c8fffdf13408f5634` |
+
+For a rich lookup fixture with values, relations, types, and space context, use the Geo entity `6b9f649e38b64224927dd66171343730` in the root Geo space `a19c345ab9866679b001d7d2138d88a1`.
 
 Well-known space IDs and additional type IDs live in `reference.md`.
 
 ## curl sanity check
 
 ```bash
-curl -s --compressed 'https://testnet-api.geobrowser.io/graphql' \
+curl -s --compressed 'https://api-testnet.geobrowser.io/graphql' \
   -H 'Content-Type: application/json' \
-  -d '{"query":"{ entities(typeId: \"4faff0b210cb49958e20109409b8699c\", first: 5) { id name } }"}' | jq .
+  -d '{"query":"{ entities(typeId: \"7ed45f2bc48b419e8e4664d5ff680b0d\", first: 5) { id name } }"}' | jq .
 ```
 
 ## Critical gotchas — quick reference
@@ -329,7 +374,7 @@ curl -s --compressed 'https://testnet-api.geobrowser.io/graphql' \
 2. **`entities` is flat**, not `{ nodes { ... } }`.
 3. **`typeId`/`spaceId` are top-level args**, not inside `filter`.
 4. **Scope relation filters by `spaceId`** to avoid `INTERNAL_SERVER_ERROR`.
-5. **`UUIDFilter` uses `is` / `isNot` / `in`**, not `equalTo`. `UUIDListFilter` uses `anyEqualTo`.
+5. **`UUIDFilter` uses `is` / `isNot` / `in` / `notIn`**. `UUIDListFilter` also supports `containedBy`, `overlaps`, and `anyEqualTo`.
 6. **Prefer `none` over `every`** for exclusion logic.
 7. **Values come back as typed fields** (`text`, `date`, `boolean`, …), not a single `value`.
 8. **Relation `id` ≠ `entityId`** — `id` is the edge (for deletion); `entityId` is the relation-as-entity (for relation properties).
