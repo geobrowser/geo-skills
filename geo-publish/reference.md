@@ -324,4 +324,18 @@ For a field without an exported canonical property—birth date and employment s
 | Entity absent during deletion       | `geo.entities.delete` can return no operations          | Treat it as an idempotent no-op in that space.                          |
 | Unknown property or relation schema | No trustworthy exported or discovered ID is available   | Discover the schema; never invent the ID.                               |
 
-Live writes use a dedicated testnet signer and a protected manual release environment. Deterministic CI should exercise parsing and contracts without loading a real key.
+## Live testnet acceptance
+
+The release-gate harness in `test/live-testnet.test.mjs` proves the SDK `0.20.1` Ultra Relay path, Contracts V2 destinations, personal-space indexing and deletion, and an isolated DAO proposal and vote. The default test suite skips the credentialed write with a clear reason and never reads `GEO_PRIVATE_KEY`.
+
+Run it only from a protected manual environment. Set `GEO_LIVE_TESTS=1` and inject `GEO_PRIVATE_KEY` through the environment using your protected secret store, then invoke:
+
+```bash
+npm run test:live
+```
+
+Do not put the private key in the command, a shell-history entry, an env file that is not gitignored, CI, a fork, an artifact, or debug output. The opt-in harness fails—not skips—when its key is missing or malformed, when it detects CI or a fork/pull-request context, when the configured chain, transaction target, calldata, DAO identity, sole editor, or topic differs from the intended fixture, or when a receipt or indexing check fails.
+
+The harness creates uniquely named `GEO-SDK-0.20.1 acceptance` fixtures. Its personal-space entity is deleted in that space and a repeated deletion must be an empty no-op. DAO spaces, DAO topic entities, proposals, proposal versions, votes, and transaction history are immutable testnet artifacts and remain after the run. Successful output contains only their public IDs and transaction hashes; it never contains the private key or sponsorship URL.
+
+The live run polls the configured API every five seconds for at most two minutes per indexing checkpoint. It requires the signer's existing personal space, creates a disposable DAO with that space as its sole editor and a minimum 60-second voting duration, preflights the DAO/editor/topic tuple before every further signature, proposes a `SLOW` edit, and votes `YES` with the exact returned proposal and version IDs. A timeout is a failed release gate, not evidence of acceptance.

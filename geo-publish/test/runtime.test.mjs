@@ -10,6 +10,7 @@ import {
   graphqlData,
   requirePersonalSpaceId,
   safeErrorMessage,
+  withRequestTimeout,
 } from "../bin/runtime.mjs";
 
 const PRIVATE_KEY_BODY = "11".repeat(32);
@@ -79,13 +80,31 @@ test("the runtime configures Geo eagerly and the sponsored wallet lazily", async
   assert.equal(runtime.network, GeoTestnetConfig);
   assert.equal(runtime.geo, geo);
   assert.equal(runtime.address, signer.address);
-  assert.deepEqual(calls, [
-    ["signer", PREFIXED_PRIVATE_KEY],
-    ["geo", { network: GeoTestnetConfig }],
-  ]);
+  assert.deepEqual(calls[0], ["signer", PREFIXED_PRIVATE_KEY]);
+  assert.equal(calls[1][0], "geo");
+  assert.equal(calls[1][1].network, GeoTestnetConfig);
+  assert.equal(typeof calls[1][1].fetch, "function");
 
   assert.equal(await runtime.createWallet(), wallet);
   assert.deepEqual(calls[2], ["wallet", { signer, network: GeoTestnetConfig }]);
+});
+
+test("the runtime fetch wrapper supplies a timeout and preserves caller cancellation", async () => {
+  const requests = [];
+  const wrappedFetch = withRequestTimeout(async (input, init) => {
+    requests.push({ input, init });
+    return { ok: true };
+  });
+
+  await wrappedFetch("https://example.test/without-signal");
+  assert.ok(requests[0].init.signal instanceof AbortSignal);
+
+  const caller = new AbortController();
+  await wrappedFetch("https://example.test/with-signal", { signal: caller.signal });
+  assert.notEqual(requests[1].init.signal, caller.signal);
+  assert.equal(requests[1].init.signal.aborted, false);
+  caller.abort();
+  assert.equal(requests[1].init.signal.aborted, true);
 });
 
 test("the configured Geo client reports HTTP failures", async () => {

@@ -5,8 +5,10 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ContentIds, GeoTestnetConfig, Ops, SystemIds } from "@geoprotocol/geo-sdk";
+import { SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis";
 
 import {
+  assertContractCall,
   createPublishingRuntime,
   findPersonalSpaceId,
   requirePersonalSpaceId,
@@ -58,7 +60,7 @@ function parsePublishArgs(argv) {
   }
 
   const type = args.type ?? "DEFAULT_TYPE";
-  if (!(type in TYPE_ALIASES)) {
+  if (!Object.hasOwn(TYPE_ALIASES, type)) {
     throw new CliUsageError(`Unknown --type "${type}". Known: ${knownTypeAliases()}`);
   }
   if (args.name.endsWith(".")) {
@@ -89,12 +91,13 @@ export function validateWriteIntent(network, { to, calldata }) {
   if (typeof registryAddress !== "string") {
     throw new Error("Geo testnet configuration is missing SPACE_REGISTRY_ADDRESS.");
   }
-  if (typeof to !== "string" || to.toLowerCase() !== registryAddress.toLowerCase()) {
-    throw new Error("Publish transaction target does not match the configured space registry.");
-  }
-  if (typeof calldata !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(calldata)) {
-    throw new Error("Publish workflow returned invalid transaction calldata.");
-  }
+  assertContractCall({
+    transaction: { to, calldata },
+    expectedTarget: registryAddress,
+    expectedFunctionName: "enter",
+    abi: SpaceRegistryAbi,
+    context: "Publish transaction",
+  });
 }
 
 export async function runPublishEntity({

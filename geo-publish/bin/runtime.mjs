@@ -1,7 +1,9 @@
 import { createGeoClient, createGeoWalletClient, GeoTestnetConfig } from "@geoprotocol/geo-sdk";
+import { decodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const PRIVATE_KEY_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}$/;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export function normalizePrivateKey(value) {
   if (typeof value !== "string" || value.length === 0) {
@@ -31,6 +33,55 @@ export function safeErrorMessage(error, secret) {
   return message;
 }
 
+export function assertContractCall({
+  transaction,
+  expectedTarget,
+  expectedFunctionName,
+  abi,
+  context = "Transaction",
+}) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(expectedTarget ?? "")) {
+    throw new Error(`${context} expected target is not an address.`);
+  }
+  if (
+    typeof transaction?.to !== "string" ||
+    transaction.to.toLowerCase() !== expectedTarget.toLowerCase()
+  ) {
+    throw new Error(
+      `${context} has an unexpected target and does not match the configured contract.`,
+    );
+  }
+  if (!Array.isArray(abi)) throw new Error(`${context} is missing the expected contract ABI.`);
+  if (typeof expectedFunctionName !== "string" || expectedFunctionName.length === 0) {
+    throw new Error(`${context} is missing the expected contract function.`);
+  }
+  if (!/^0x(?:[0-9a-fA-F]{2})+$/.test(transaction?.calldata ?? "")) {
+    throw new Error(`${context} returned invalid transaction calldata.`);
+  }
+
+  let decoded;
+  try {
+    decoded = decodeFunctionData({ abi, data: transaction.calldata });
+  } catch {
+    throw new Error(`${context} calldata does not decode against the expected contract ABI.`);
+  }
+  if (decoded.functionName !== expectedFunctionName) {
+    throw new Error(
+      `Refusing to sign unexpected contract function ${decoded.functionName} for ${context}.`,
+    );
+  }
+}
+
+export function withRequestTimeout(fetchImpl = globalThis.fetch, timeoutMs = REQUEST_TIMEOUT_MS) {
+  if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required.");
+
+  return (input, init = {}) => {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+    return fetchImpl(input, { ...init, signal });
+  };
+}
+
 export function createPublishingRuntime({
   privateKey = process.env.GEO_PRIVATE_KEY,
   network = GeoTestnetConfig,
@@ -41,8 +92,7 @@ export function createPublishingRuntime({
 } = {}) {
   const normalizedPrivateKey = normalizePrivateKey(privateKey);
   const signer = privateKeyToAccountFn(normalizedPrivateKey);
-  const geoParams = fetch === undefined ? { network } : { network, fetch };
-  const geo = createGeoClientFn(geoParams);
+  const geo = createGeoClientFn({ network, fetch: withRequestTimeout(fetch) });
 
   return {
     address: signer.address,

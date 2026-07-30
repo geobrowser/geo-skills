@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { ContentIds, GeoTestnetConfig, SystemIds } from "@geoprotocol/geo-sdk";
+import { SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis";
+import { encodeFunctionData } from "viem";
 
 import { mainPublishEntity, runPublishEntity, TYPE_ALIASES } from "../bin/publish-entity.mjs";
 import { runWhoami } from "../bin/whoami.mjs";
@@ -14,7 +16,18 @@ const DAO_SPACE_ID = "22222222222222222222222222222222";
 const ENTITY_ID = "33333333333333333333333333333333";
 const PRIVATE_KEY = `0x${"11".repeat(32)}`;
 const REGISTRY = GeoTestnetConfig.contracts.SPACE_REGISTRY_ADDRESS;
-const CALLDATA = "0x1234";
+const CALLDATA = encodeFunctionData({
+  abi: SpaceRegistryAbi,
+  functionName: "enter",
+  args: [
+    `0x${"00".repeat(16)}`,
+    `0x${"00".repeat(16)}`,
+    `0x${"00".repeat(32)}`,
+    `0x${"00".repeat(32)}`,
+    "0x",
+    "0x",
+  ],
+});
 
 function captureLogger() {
   const lines = [];
@@ -150,6 +163,19 @@ test("every retained alias resolves while removed aliases fail before runtime cr
       },
     }),
     /Unknown --type "EVENT_TYPE".*DEFAULT_TYPE.*SKILL_TYPE/,
+  );
+  assert.equal(runtimeCalls, 0);
+
+  await assert.rejects(
+    runPublishEntity({
+      argv: ["--name", "Inherited alias", "--type", "constructor", "--dry-run"],
+      privateKey: PRIVATE_KEY,
+      logger: captureLogger(),
+      createRuntime() {
+        runtimeCalls += 1;
+      },
+    }),
+    /Unknown --type "constructor".*DEFAULT_TYPE.*SKILL_TYPE/,
   );
   assert.equal(runtimeCalls, 0);
 });
@@ -298,13 +324,22 @@ test("writes fail closed on the wrong chain, target, or malformed calldata", asy
       name: "target",
       network: GeoTestnetConfig,
       transaction: { to: "0x2222222222222222222222222222222222222222", calldata: CALLDATA },
-      expected: /does not match the configured space registry/,
+      expected: /unexpected target.*does not match the configured contract/,
     },
     {
       name: "calldata",
       network: GeoTestnetConfig,
       transaction: { to: REGISTRY, calldata: "0x" },
       expected: /invalid transaction calldata/,
+    },
+    {
+      name: "function",
+      network: GeoTestnetConfig,
+      transaction: {
+        to: REGISTRY,
+        calldata: encodeFunctionData({ abi: SpaceRegistryAbi, functionName: "clearSpaceId" }),
+      },
+      expected: /unexpected contract function clearSpaceId/,
     },
   ];
 
