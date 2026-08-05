@@ -176,10 +176,14 @@ Values come back as typed fields (`text`, `date`, `boolean`, `decimal`, `integer
     }
     proposals(first: 5) {
       id
+      executedAt
       currentVersion
       proposalVersions(first: 5) {
         proposalVersion
         votingMode
+        startTime
+        endTime
+        executeBy
         quorum
         threshold
         yesCount
@@ -191,7 +195,7 @@ Values come back as typed fields (`text`, `date`, `boolean`, `decimal`, `integer
 }
 ```
 
-Editors are identified by their personal or DAO `memberSpaceId`, not by an account address. For a proposal, use `currentVersion` to identify the active version and include `proposalVersion` when reading version-aware votes.
+Editors are identified by their personal or DAO `memberSpaceId`, not by an account address. For a proposal, use `currentVersion` to identify the active version and include `proposalVersion` when reading version-aware votes. A passing `SLOW` proposal still needs explicit execution after `endTime` and before `executeBy`; confirm `executedAt` afterward.
 
 ### Cursor pagination loop (TypeScript)
 

@@ -7,6 +7,7 @@ export const API_ENDPOINT = "https://api-testnet.geobrowser.io/graphql";
 const GEO_ENTITY_ID = "6b9f649e38b64224927dd66171343730";
 const PERSON_TYPE_ID = "7ed45f2bc48b419e8e4664d5ff680b0d";
 const ROOT_SPACE_ID = "a19c345ab9866679b001d7d2138d88a1";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const CONTRACT_QUERY = `
   query GeoApiContractSmoke {
@@ -53,6 +54,18 @@ const CONTRACT_QUERY = `
       }
     }
 
+    identitySpaces: spaces(
+      filter: { type: { is: PERSONAL }, address: { isInsensitive: "${ZERO_ADDRESS}" } }
+      first: 1
+    ) { id }
+
+    editorMemberships: editorsConnection(
+      filter: { memberSpaceId: { is: "${ROOT_SPACE_ID}" } }
+      first: 1
+    ) {
+      nodes { space { id type topic { name } } }
+    }
+
     space(id: "${ROOT_SPACE_ID}") {
       id
       type
@@ -73,10 +86,14 @@ const CONTRACT_QUERY = `
       }
       proposals(first: 1) {
         id
+        executedAt
         currentVersion
         proposalVersions(first: 1) {
           proposalVersion
           votingMode
+          startTime
+          endTime
+          executeBy
           quorum
           threshold
           partialPercentageSupportThreshold
@@ -146,7 +163,7 @@ export async function requestGraphQL(query, fetchImpl = fetch) {
     throw new Error(`${label}: GraphQL errors: ${messages.join("; ")}`);
   }
 
-  if (!payload || typeof payload !== "object" || !("data" in payload)) {
+  if (!payload || typeof payload !== "object" || !("data" in payload) || payload.data === null) {
     throw new Error(`${label}: GraphQL response did not contain a data field`);
   }
 
@@ -203,6 +220,15 @@ export async function verifyFailureContracts() {
     }),
     /did not contain a data field/,
   );
+
+  await expectFailure(
+    "null data",
+    async () => ({
+      ok: true,
+      json: async () => ({ data: null }),
+    }),
+    /did not contain a data field/,
+  );
 }
 
 function fieldNames(type) {
@@ -243,6 +269,12 @@ export function verifyLiveContract(data) {
   assert.ok(connection.pageInfo.startCursor, "Person connection has no start cursor");
   assert.ok(connection.pageInfo.endCursor, "Person connection has no end cursor");
 
+  assert.ok(Array.isArray(data.identitySpaces), "spaces should return a flat array");
+  assert.ok(
+    Array.isArray(data.editorMemberships?.nodes),
+    "editorsConnection should expose membership nodes",
+  );
+
   const space = data.space;
   assert.ok(space, "root Geo space is missing");
   assert.equal(space.id, ROOT_SPACE_ID, "root Geo space ID drifted");
@@ -271,12 +303,15 @@ export function verifyLiveContract(data) {
 
   const proposal = space.proposals[0];
   assert.ok(proposal?.id, "root space has no proposal fixture");
+  assert.ok("executedAt" in proposal, "proposal execution state is missing");
   assert.equal(typeof proposal.currentVersion, "number", "proposal currentVersion is missing");
   const proposalVersion = proposal.proposalVersions[0];
   assert.ok(proposalVersion, "proposal version fixture is missing");
   for (const field of [
     "proposalVersion",
     "votingMode",
+    "startTime",
+    "endTime",
     "quorum",
     "threshold",
     "partialPercentageSupportThreshold",
@@ -291,6 +326,7 @@ export function verifyLiveContract(data) {
       `proposal version ${field} is missing`,
     );
   }
+  assert.ok("executeBy" in proposalVersion, "proposal version execution deadline is missing");
 
   assertFields(data.uuidFilter, ["is", "isNot", "in", "notIn"]);
   assertFields(data.uuidListFilter, ["is", "isNot", "in", "containedBy", "overlaps", "anyEqualTo"]);

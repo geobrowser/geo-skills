@@ -48,7 +48,7 @@ The migration must leave one coherent testnet contract across `geo-query` and `g
 **Contracts V2**
 
 - R8. Runtime code obtains the testnet chain, sponsorship route, and contract addresses from `GeoTestnetConfig` rather than duplicating configuration.
-- R9. DAO examples and verification use space IDs, current voting settings, version-aware proposals and votes, and Contracts V2 result shapes.
+- R9. DAO examples and verification use space IDs, current voting settings, version-aware proposals and votes, explicit post-voting execution, and Contracts V2 result shapes.
 
 **Verification**
 
@@ -70,8 +70,8 @@ The migration must leave one coherent testnet contract across `geo-query` and `g
 - AE3. **Contracts V2 DAO edit**
   - **Covers:** R8, R9, R11
   - **Given:** An authorized personal space and a designated test DAO.
-  - **When:** An edit proposal and its required version-aware vote are submitted using space IDs.
-  - **Then:** Receipts succeed and the API exposes the proposal version, current proposal state, voting settings, and indexed edit.
+  - **When:** An edit proposal, its required version-aware vote, and its post-voting execution are submitted using space IDs.
+  - **Then:** Receipts succeed and the API exposes the proposal version, voting window, execution deadline and state, voting settings, and indexed edit.
 
 ### Scope Boundaries
 
@@ -111,6 +111,7 @@ The migration must leave one coherent testnet contract across `geo-query` and `g
 | `network: "TESTNET"`                                     | `network: GeoTestnetConfig`                                                        |
 | Hardcoded publishing API, RPC, sponsorship, or contracts | `GeoTestnetConfig`                                                                 |
 | `daoSpaceAddress`                                        | `daoSpaceId` or `spaceId` according to the v2 method                               |
+| Treating a successful vote as execution                  | `executeProposal` after a passing `SLOW` vote ends and before `executeBy`          |
 | Synchronous/global entity deletion                       | Awaited, space-scoped `geo.entities.delete` operations                             |
 | `TextBlock.make` returning `{ ops, position }`           | `TextBlock.make` returning `Op[]`                                                  |
 | `Position.default`, `after`, or `before`                 | `Position.generate` and `Position.generateBetween`                                 |
@@ -206,7 +207,7 @@ flowchart TB
   2. Every operation-building example returns or accumulates `Op[]` without destructuring the obsolete text-block result.
   3. Decimal examples use exponent and mantissa, while time and datetime examples include a timezone.
   4. Deletion guidance includes `spaceId`, awaits current graph context, and avoids publishing an empty operation list.
-  5. DAO examples query current voting settings and carry version identifiers where the v2 flow requires them.
+  5. DAO examples query current voting settings, carry version identifiers where the v2 flow requires them, and explicitly execute passing `SLOW` proposals within their execution window.
 - **Verification:** A contributor can follow one personal-space example and one DAO-space example without encountering an absent export, obsolete parameter, or contradicted API field.
 
 ### U5. Testnet sponsorship, contracts, and indexing acceptance
@@ -215,13 +216,13 @@ flowchart TB
 - **Requirements:** R8, R9, R11; AE1, AE3; KTD3, KTD4, KTD6.
 - **Dependencies:** U2, U3, U4.
 - **Files:** `geo-publish/test/live-testnet.test.mjs`, `geo-publish/package.json`, `geo-publish/reference.md`.
-- **Approach:** Add environment-gated live tests that are excluded from deterministic CI. Use a dedicated funded or sponsored testnet signer and designated DAO, submit real transactions through `createGeoWalletClient`, and poll the new API every five seconds for up to two minutes. Assert configured chain and contract behavior through receipts, known space mappings, proposals, and indexed edits rather than merely checking deployed bytecode.
+- **Approach:** Add environment-gated live tests that are excluded from deterministic CI. Use a dedicated funded or sponsored testnet signer and designated DAO, exercise the production `publish-entity` path for the default-type personal edit, submit the remaining real transactions through `createGeoWalletClient`, and poll the new API every five seconds for up to two minutes. After a passing `SLOW` vote reaches `endTime`, execute the proposal before `executeBy`. Assert configured chain and contract behavior through receipts, known space mappings, proposals, execution state, and indexed edits rather than merely checking deployed bytecode.
 - **Test scenarios:**
   1. `GeoTestnetConfig` reports chain ID `55516`, the new API origin, sponsorship configuration, and the required registry and DAO factory addresses.
   2. A sponsored EIP-7702 personal-space edit succeeds through the `0.20.1` Ultra Relay route.
   3. The no-type entity from AE1 appears by ID and through `SystemIds.DEFAULT_TYPE` before the polling deadline.
   4. Space-scoped deletion returns operations for the test entity, publishes them successfully, and treats a repeat deletion as an empty no-op.
-  5. The authorized DAO flow from AE3 succeeds without a DAO contract address supplied by the caller.
+  5. The authorized DAO flow from AE3 proposes, votes, and executes successfully without a DAO contract address supplied by the caller.
   6. Missing live-test credentials skip with a clear reason, while invalid authorization or sponsorship fails rather than being misreported as a skip.
 - **Verification:** Store transaction, entity, edit, proposal, and version identifiers in the acceptance output, with no private key or secret-bearing URL logged.
 
@@ -250,6 +251,6 @@ The live write test is a release gate and must be run with testnet-only credenti
 - No active code, documentation, or example references the old API hostname or a forbidden v0.18 compatibility pattern.
 - Deterministic installs, formatting, migration-contract checks, Node 20 tests, and read-only API smoke pass.
 - A real sponsored personal-space publish verifies the `0.20.1` Ultra Relay configuration and indexes through `DEFAULT_TYPE`.
-- A designated Contracts V2 DAO proposal and vote succeed and are visible through current governance fields.
+- A designated Contracts V2 DAO proposal, vote, and execution succeed and are visible through current governance fields.
 - No secrets, temporary diagnostics, abandoned migration adapters, or dead-end experimental code remain in the repository diff.
 - Rollback is a coordinated revert of dependency, lockfile, code, documentation, and tests; the old host and SDK are not runtime fallback mechanisms.

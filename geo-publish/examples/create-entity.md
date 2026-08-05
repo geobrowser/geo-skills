@@ -106,7 +106,7 @@ const proposal = await geo.daoSpaces.proposeEdit({
   author: PERSONAL_SPACE_ID,
   callerSpaceId: PERSONAL_SPACE_ID,
   daoSpaceId: DAO_SPACE_ID,
-  votingMode: "FAST",
+  votingMode: "SLOW",
 });
 await wallet.sendTransaction({ to: proposal.to, data: proposal.calldata });
 
@@ -118,6 +118,14 @@ const vote = geo.daoSpaces.voteProposal({
   vote: "YES",
 });
 await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
+
+// After the matching version reaches endTime with a passing tally, and before executeBy:
+const execution = geo.daoSpaces.executeProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+});
+await wallet.sendTransaction({ to: execution.to, data: execution.calldata });
 ```
 
-Read the proposal's `currentVersion` and matching `proposalVersions` entry after indexing. Do not assume a fast proposal has executed merely because submission succeeded.
+Read the proposal's `currentVersion` and matching `proposalVersions` entry after indexing. Vote only on the intended version, and execute a passing `SLOW` proposal only after `endTime` and before `executeBy`.

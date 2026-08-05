@@ -55,7 +55,7 @@ if (deleteOps.length === 0) {
 
 The deletion is asynchronous, idempotent when the entity is absent, and scoped to `spaceId`. It does not establish what happens to copies or references in any other space.
 
-For a DAO target, pass the non-empty `deleteOps` through the version-aware proposal and vote workflow in `create-entity.md`.
+For a DAO target, pass the non-empty `deleteOps` through the version-aware proposal, vote, and execution workflow in `create-entity.md`.
 
 ## Failure handling
 

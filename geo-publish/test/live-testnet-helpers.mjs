@@ -9,7 +9,8 @@ import { DaoSpaceFactoryAbi, SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis"
 import { createPublicClient, defineChain, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { assertContractCall } from "../bin/runtime.mjs";
+import { runPublishEntity } from "../bin/publish-entity.mjs";
+import { assertContractCall, withRequestTimeout } from "../bin/runtime.mjs";
 
 const EXPECTED_CHAIN_ID = 55516;
 const EXPECTED_API_ORIGIN = "https://api-testnet.geobrowser.io";
@@ -224,10 +225,14 @@ function proposalQuery(proposalId, personalSpaceId, daoSpaceId) {
       id
       spaceId
       proposedBy
+      executedAt
       currentVersion
       proposalVersions {
         proposalVersion
         votingMode
+        startTime
+        endTime
+        executeBy
         yesCount
         noCount
         abstainCount
@@ -325,6 +330,15 @@ async function sendAndWait(context, label, transaction, expectedIntent) {
   return { hash, receipt };
 }
 
+async function waitForSubmittedTransaction(publicClient, label, hash) {
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash,
+    timeout: POLL_TIMEOUT_MS,
+  });
+  invariant(receipt.status === "success", `${label} transaction did not succeed.`);
+  return { hash, receipt };
+}
+
 function uniqueName(kind) {
   const nonce = `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
   return `GEO-SDK-0.20.1 acceptance ${kind} ${nonce}`;
@@ -332,6 +346,19 @@ function uniqueName(kind) {
 
 async function readDaoSpace(geo, daoSpaceId) {
   return (await queryGraph(geo, daoSpaceQuery(daoSpaceId))).space;
+}
+
+export async function publishDefaultEntityThroughCli({
+  privateKey,
+  personalSpaceId,
+  name,
+  publishEntity = runPublishEntity,
+}) {
+  return publishEntity({
+    argv: ["--name", name, "--space-id", personalSpaceId, "--author", personalSpaceId],
+    privateKey,
+    logger: { log() {}, error() {} },
+  });
 }
 
 async function executeLiveAcceptance(privateKey) {
@@ -346,7 +373,7 @@ async function executeLiveAcceptance(privateKey) {
     (await publicClient.getChainId()) === EXPECTED_CHAIN_ID,
     `Configured RPC did not report chain ${EXPECTED_CHAIN_ID}.`,
   );
-  const geo = createGeoClient({ network: GeoTestnetConfig });
+  const geo = createGeoClient({ network: GeoTestnetConfig, fetch: withRequestTimeout() });
   const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig, publicClient });
   const context = { publicClient, wallet };
 
@@ -358,33 +385,30 @@ async function executeLiveAcceptance(privateKey) {
   const personalSpaceId = normalizeId(personalSpaceIdHex, "personal space ID");
 
   const personalName = uniqueName("personal entity");
-  const personalEntity = Ops.entities.create({
+  const personalEntity = await publishDefaultEntityThroughCli({
+    privateKey,
+    personalSpaceId,
     name: personalName,
-    types: [SystemIds.DEFAULT_TYPE],
   });
-  const personalEdit = await geo.personalSpaces.publishEdit({
-    name: personalName,
-    spaceId: personalSpaceId,
-    author: personalSpaceId,
-    ops: personalEntity.ops,
-  });
-  const personalReceipt = await sendAndWait(
-    context,
+  const personalReceipt = await waitForSubmittedTransaction(
+    publicClient,
     "personal entity publish",
-    personalEdit,
-    SPACE_REGISTRY_INTENT,
+    personalEntity.txHash,
   );
   await waitFor(
-    `personal entity ${personalEntity.id}`,
-    () => queryGraph(geo, entityQuery(personalEntity.id, personalSpaceId)),
+    `personal entity ${personalEntity.entityId}`,
+    () => queryGraph(geo, entityQuery(personalEntity.entityId, personalSpaceId)),
     ({ entity }) =>
-      normalizeId(entity?.id) === normalizeId(personalEntity.id) &&
+      normalizeId(entity?.id) === normalizeId(personalEntity.entityId) &&
       entity.name === personalName &&
       entity.spaceIds?.map((id) => normalizeId(id)).includes(personalSpaceId) &&
       entity.types?.some(({ id }) => normalizeId(id) === normalizeId(SystemIds.DEFAULT_TYPE)),
   );
 
-  const deletion = await geo.entities.delete({ id: personalEntity.id, spaceId: personalSpaceId });
+  const deletion = await geo.entities.delete({
+    id: personalEntity.entityId,
+    spaceId: personalSpaceId,
+  });
   invariant(
     deletion.ops.length > 0,
     "The indexed personal entity produced no deletion operations.",
@@ -402,13 +426,13 @@ async function executeLiveAcceptance(privateKey) {
     SPACE_REGISTRY_INTENT,
   );
   await waitFor(
-    `space-scoped deletion of ${personalEntity.id}`,
-    () => queryGraph(geo, entityQuery(personalEntity.id, personalSpaceId)),
+    `space-scoped deletion of ${personalEntity.entityId}`,
+    () => queryGraph(geo, entityQuery(personalEntity.entityId, personalSpaceId)),
     ({ entity }) =>
       !entity || (entity.valuesList.length === 0 && entity.relationsList.length === 0),
   );
   const repeatDeletion = await geo.entities.delete({
-    id: personalEntity.id,
+    id: personalEntity.entityId,
     spaceId: personalSpaceId,
   });
   invariant(repeatDeletion.ops.length === 0, "Repeat entity deletion must be an empty no-op.");
@@ -527,6 +551,47 @@ async function executeLiveAcceptance(privateKey) {
       );
     },
   );
+  const executableProposal = await waitFor(
+    `DAO proposal ${proposal.proposalId} voting window`,
+    () => queryGraph(geo, proposalQuery(proposal.proposalId, personalSpaceId, daoSpaceId)),
+    ({ proposals }) => {
+      const current = proposals?.[0];
+      const version = current?.proposalVersions?.find(
+        ({ proposalVersion }) => proposalVersion === proposal.versionId,
+      );
+      const now = Math.floor(Date.now() / 1_000);
+      return (
+        current?.currentVersion === proposal.versionId &&
+        current.executedAt === null &&
+        Number(version?.yesCount) >= 1 &&
+        Number(version?.endTime) <= now &&
+        Number(version?.executeBy) > now
+      );
+    },
+  );
+  invariant(
+    executableProposal.proposals[0].currentVersion === proposal.versionId,
+    "Executable proposal version drifted.",
+  );
+
+  // Abort before execution if DAO ownership, topic, editor, or proposal version changed.
+  assertDaoAuthorization(await readDaoSpace(geo, daoSpaceId), expectedDao);
+  const execution = geo.daoSpaces.executeProposal({
+    authorSpaceId: personalSpaceIdHex,
+    spaceId: createdDao.spaceIdHex,
+    proposalId: proposal.proposalId,
+  });
+  const executionReceipt = await sendAndWait(
+    context,
+    "DAO proposal execution",
+    execution,
+    SPACE_REGISTRY_INTENT,
+  );
+  await waitFor(
+    `execution of DAO proposal ${proposal.proposalId}`,
+    () => queryGraph(geo, proposalQuery(proposal.proposalId, personalSpaceId, daoSpaceId)),
+    ({ proposals }) => proposals?.[0]?.executedAt != null,
+  );
   await waitFor(
     `DAO mutation ${daoEntity.id}`,
     () => queryGraph(geo, entityQuery(daoEntity.id, daoSpaceId)),
@@ -538,8 +603,8 @@ async function executeLiveAcceptance(privateKey) {
 
   return {
     personalSpaceId,
-    personalEntityId: personalEntity.id,
-    personalEditId: personalEdit.editId,
+    personalEntityId: personalEntity.entityId,
+    personalEditId: personalEntity.editId,
     personalTransactionHash: personalReceipt.hash,
     deletionEditId: deleteEdit.editId,
     deletionTransactionHash: deleteReceipt.hash,
@@ -552,6 +617,7 @@ async function executeLiveAcceptance(privateKey) {
     versionId: proposal.versionId,
     proposalTransactionHash: proposalReceipt.hash,
     voteTransactionHash: voteReceipt.hash,
+    executionTransactionHash: executionReceipt.hash,
   };
 }
 

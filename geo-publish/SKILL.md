@@ -17,7 +17,7 @@ Use this skill to:
 - Create or update entities and relations.
 - Delete a relation or delete an entity within one space.
 - Publish an edit to a personal space.
-- Propose and vote on an edit in a DAO space.
+- Propose, vote on, and execute an edit in a DAO space.
 
 This skill is testnet-only and latest-only. Do not add an old-SDK or old-endpoint fallback.
 
@@ -166,7 +166,7 @@ const txHash = await wallet.sendTransaction({ to, data: calldata });
 
 An empty operation list is invalid. Treat an empty list from a conditional workflow as a no-op instead of calling the publish method.
 
-## Propose and vote in a DAO space
+## Propose, vote, and execute in a DAO space
 
 First query the DAO space's `spaceVotingSetting`, editors, and active proposal data. Contracts V2 identifies the caller and DAO with space IDs; callers do not supply a DAO contract address.
 
@@ -177,7 +177,7 @@ const proposal = await geo.daoSpaces.proposeEdit({
   author: PERSONAL_SPACE_ID,
   callerSpaceId: PERSONAL_SPACE_ID,
   daoSpaceId: DAO_SPACE_ID,
-  votingMode: "FAST",
+  votingMode: "SLOW",
 });
 
 const proposeTxHash = await wallet.sendTransaction({
@@ -194,9 +194,21 @@ const vote = geo.daoSpaces.voteProposal({
 });
 
 const voteTxHash = await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
+
+// After the matching proposal version reaches endTime with a passing tally,
+// and before executeBy, execute it explicitly.
+const execution = geo.daoSpaces.executeProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+});
+const executionTxHash = await wallet.sendTransaction({
+  to: execution.to,
+  data: execution.calldata,
+});
 ```
 
-Retain `proposalId` and `versionId`. In the API, read `currentVersion` and the matching entry in `proposalVersions`; a vote must target the intended version. Do not assume fast-path eligibility or fixed thresholds—read the target space's current settings.
+Retain `proposalId` and `versionId`. In the API, read `currentVersion` and the matching entry in `proposalVersions`; a vote must target the intended version. Before `executeProposal`, require that version's voting window to have ended, its tally to pass, and `executeBy` to remain in the future. Do not assume fast-path eligibility or fixed thresholds—read the target space's current settings.
 
 ## Updates and deletion
 

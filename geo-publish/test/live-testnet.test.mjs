@@ -9,6 +9,7 @@ import {
   assertDaoAuthorization,
   assertGeoTestnetConfig,
   assertTransactionIntent,
+  publishDefaultEntityThroughCli,
   readLiveTestEnvironment,
   redactError,
   runLiveAcceptance,
@@ -43,6 +44,33 @@ test("the default gate skips without reading credentials", () => {
     enabled: false,
     reason: "Set GEO_LIVE_TESTS=1 in a protected manual environment to run testnet writes.",
   });
+});
+
+test("live personal acceptance delegates to the production CLI with the default type", async () => {
+  let invocation;
+  const result = await publishDefaultEntityThroughCli({
+    privateKey: PRIVATE_KEY,
+    personalSpaceId: PERSONAL_SPACE_ID,
+    name: "Acceptance entity",
+    async publishEntity(params) {
+      invocation = params;
+      return { entityId: TOPIC_ID, txHash: "0xtransaction" };
+    },
+  });
+
+  assert.deepEqual(result, { entityId: TOPIC_ID, txHash: "0xtransaction" });
+  assert.deepEqual(invocation.argv, [
+    "--name",
+    "Acceptance entity",
+    "--space-id",
+    PERSONAL_SPACE_ID,
+    "--author",
+    PERSONAL_SPACE_ID,
+  ]);
+  assert.equal(invocation.argv.includes("--type"), false);
+  assert.equal(invocation.privateKey, PRIVATE_KEY);
+  assert.equal(typeof invocation.logger.log, "function");
+  assert.equal(typeof invocation.logger.error, "function");
 });
 
 test("opt-in fails closed for missing, malformed, CI, and fork credentials", () => {

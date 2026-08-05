@@ -22,6 +22,8 @@ import {
   TextBlock,
   type Op,
 } from "@geoprotocol/geo-sdk";
+import { SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis";
+import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const raw = process.env.GEO_PRIVATE_KEY;
@@ -32,6 +34,16 @@ const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
 const signer = privateKeyToAccount(privateKey);
 const geo = createGeoClient({ network: GeoTestnetConfig });
 const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig });
+const publicClient = createPublicClient({
+  transport: http(GeoTestnetConfig.chain.rpcUrl),
+});
+
+async function sendAndWait({ to, calldata }: { to: `0x${string}`; calldata: `0x${string}` }) {
+  const hash = await wallet.sendTransaction({ to, data: calldata });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new Error(`Transaction failed: ${hash}`);
+  return hash;
+}
 ```
 
 `GeoTestnetConfig` supplies the current API origin, chain, Ultra Relay sponsorship URL, and Contracts V2 addresses. Publishing code should not duplicate them.
@@ -190,12 +202,41 @@ The configured image workflow uploads the source and returns the image entity ID
 ### Create a personal space
 
 ```typescript
+if (await geo.personalSpaces.hasSpace({ address: signer.address })) {
+  throw new Error("This signer already has a personal space");
+}
+
 const creation = geo.personalSpaces.create({
   name: "My personal space",
   accountAddress: signer.address,
 });
-await wallet.sendTransaction({ to: creation.to, data: creation.calldata });
+await sendAndWait(creation);
+
+const spaceIdHex = await publicClient.readContract({
+  address: GeoTestnetConfig.contracts.SPACE_REGISTRY_ADDRESS,
+  abi: SpaceRegistryAbi,
+  functionName: "addressToSpaceId",
+  args: [signer.address],
+});
+if (/^0x0{32}$/i.test(spaceIdHex)) throw new Error("Personal space registration was not found");
+const spaceId = spaceIdHex.slice(2);
+
+const profile = await geo.personalSpaces.publishEdit({
+  name: "Create personal space profile",
+  spaceId,
+  author: spaceId,
+  ops: creation.ops,
+});
+await sendAndWait(profile);
+
+const topic = geo.personalSpaces.setTopic({
+  spaceId,
+  topicId: creation.spaceEntityId,
+});
+await sendAndWait(topic);
 ```
+
+Registration alone is not the complete workflow. Publish the returned profile operations and set `creation.spaceEntityId` as the topic before treating the personal space as initialized.
 
 ### Publish an edit
 
@@ -235,10 +276,14 @@ The author is a personal space ID, not a Person entity ID or wallet address. Do 
     }
     proposals(first: 5) {
       id
+      executedAt
       currentVersion
       proposalVersions(first: 5) {
         proposalVersion
         votingMode
+        startTime
+        endTime
+        executeBy
         yesCount
         noCount
         abstainCount
@@ -250,7 +295,7 @@ The author is a personal space ID, not a Person entity ID or wallet address. Do 
 
 Editor identity is `memberSpaceId`. Read the current voting settings instead of assuming threshold, duration, or fast-path access.
 
-### Propose and vote
+### Propose, vote, and execute
 
 ```typescript
 const proposal = await geo.daoSpaces.proposeEdit({
@@ -259,7 +304,7 @@ const proposal = await geo.daoSpaces.proposeEdit({
   author: PERSONAL_SPACE_ID,
   callerSpaceId: PERSONAL_SPACE_ID,
   daoSpaceId: DAO_SPACE_ID,
-  votingMode: "FAST",
+  votingMode: "SLOW",
 });
 await wallet.sendTransaction({ to: proposal.to, data: proposal.calldata });
 
@@ -271,9 +316,18 @@ const vote = geo.daoSpaces.voteProposal({
   vote: "YES",
 });
 await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
+
+// After the API reports endTime <= the current Unix time, a passing tally,
+// and executeBy still in the future, execute the proposal explicitly.
+const execution = geo.daoSpaces.executeProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+});
+await wallet.sendTransaction({ to: execution.to, data: execution.calldata });
 ```
 
-`proposeEdit` returns `proposalId` and `versionId` together with the edit identifiers and transaction fields. When reading the result from the API, match `currentVersion` to `proposalVersions[].proposalVersion`. Use the returned version when voting. No DAO address belongs in caller input.
+`proposeEdit` returns `proposalId` and `versionId` together with the edit identifiers and transaction fields. When reading the result from the API, match `currentVersion` to `proposalVersions[].proposalVersion`. Use the returned version when voting. For `SLOW` voting, submit `executeProposal` only after the matching version has ended, its tally passes, and `executeBy` has not elapsed. No DAO address belongs in caller input.
 
 For a proposal update, set `updateProposal: true`, retain its `proposalId`, and supply the intended `versionId` when required. Membership, editor, voting-settings, and execution methods use `authorSpaceId` and `spaceId`.
 
@@ -326,7 +380,7 @@ For a field without an exported canonical property—birth date and employment s
 
 ## Live testnet acceptance
 
-The release-gate harness in `test/live-testnet.test.mjs` proves the SDK `0.20.1` Ultra Relay path, Contracts V2 destinations, personal-space indexing and deletion, and an isolated DAO proposal and vote. The default test suite skips the credentialed write with a clear reason and never reads `GEO_PRIVATE_KEY`.
+The release-gate harness in `test/live-testnet.test.mjs` proves the production CLI's SDK `0.20.1` Ultra Relay path, Contracts V2 destinations, personal-space indexing and deletion, and an isolated DAO proposal, vote, and execution. The default test suite skips the credentialed write with a clear reason and never reads `GEO_PRIVATE_KEY`.
 
 Run it only from a protected manual environment. Set `GEO_LIVE_TESTS=1` and inject `GEO_PRIVATE_KEY` through the environment using your protected secret store, then invoke:
 
@@ -338,4 +392,4 @@ Do not put the private key in the command, a shell-history entry, an env file th
 
 The harness creates uniquely named `GEO-SDK-0.20.1 acceptance` fixtures. Its personal-space entity is deleted in that space and a repeated deletion must be an empty no-op. DAO spaces, DAO topic entities, proposals, proposal versions, votes, and transaction history are immutable testnet artifacts and remain after the run. Successful output contains only their public IDs and transaction hashes; it never contains the private key or sponsorship URL.
 
-The live run polls the configured API every five seconds for at most two minutes per indexing checkpoint. It requires the signer's existing personal space, creates a disposable DAO with that space as its sole editor and a minimum 60-second voting duration, preflights the DAO/editor/topic tuple before every further signature, proposes a `SLOW` edit, and votes `YES` with the exact returned proposal and version IDs. A timeout is a failed release gate, not evidence of acceptance.
+The live run polls the configured API every five seconds for at most two minutes per indexing checkpoint. It requires the signer's existing personal space, creates a disposable DAO with that space as its sole editor and a minimum 60-second voting duration, preflights the DAO/editor/topic tuple before every further signature, proposes a `SLOW` edit, votes `YES` with the exact returned proposal and version IDs, and explicitly executes the passing proposal inside its execution window. A timeout is a failed release gate, not evidence of acceptance.

@@ -146,6 +146,9 @@ Same for `valuesConnection`.
       proposalVersions(first: 5) {
         proposalVersion
         votingMode
+        startTime
+        endTime
+        executeBy
         quorum
         threshold
         partialPercentageSupportThreshold
@@ -164,6 +167,7 @@ Same for `valuesConnection`.
 - `proposals` is a flat list. `currentVersion` identifies the proposal's active version.
 - `proposalVersions` is also a flat list. Votes and tallies are version-aware, so retain both `id` and `proposalVersion`.
 - `spaceVotingSetting` contains the current thresholds, quorum, duration, fast-path restriction, and execution grace period.
+- A passing `SLOW` proposal is executable after its active version's `endTime` and before `executeBy`. Submit the Contracts V2 execution action and verify `executedAt`; a successful vote alone does not publish the edit.
 
 ## Filter grammar
 

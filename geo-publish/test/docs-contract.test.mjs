@@ -46,6 +46,10 @@ test("guidance uses configured v0.20 clients, ops, and wallet submission", async
   assert.match(guidance, /Ops\.relations\.delete\(/);
   assert.match(guidance, /geo\.personalSpaces\.publishEdit\(/);
   assert.match(guidance, /wallet\.sendTransaction\(\{\s*to,\s*data:\s*calldata\s*\}\)/s);
+  assert.match(guidance, /geo\.personalSpaces\.create\(/);
+  assert.match(guidance, /ops:\s*creation\.ops/);
+  assert.match(guidance, /geo\.personalSpaces\.setTopic\(/);
+  assert.match(guidance, /functionName:\s*"addressToSpaceId"/);
 });
 
 test("DAO guidance is space-ID based and version aware", async () => {
@@ -58,6 +62,10 @@ test("DAO guidance is space-ID based and version aware", async () => {
   assert.match(guidance, /versionId:\s*proposal\.versionId/);
   assert.match(guidance, /authorSpaceId:\s*PERSONAL_SPACE_ID/);
   assert.match(guidance, /spaceId:\s*DAO_SPACE_ID/);
+  assert.match(guidance, /votingMode:\s*"SLOW"/);
+  assert.match(guidance, /geo\.daoSpaces\.executeProposal\(/);
+  assert.match(guidance, /\bendTime\b/);
+  assert.match(guidance, /\bexecuteBy\b/);
   assert.match(guidance, /spaceVotingSetting/);
   assert.match(guidance, /currentVersion/);
   assert.match(guidance, /proposalVersions/);
