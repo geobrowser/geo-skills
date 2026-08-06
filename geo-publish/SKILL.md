@@ -49,7 +49,7 @@ npm install --save-exact @geoprotocol/geo-sdk@0.20.1 viem@2.37.6
 
 ### Credentials
 
-Use a dedicated, least-privilege testnet key. Put `GEO_PRIVATE_KEY=0x...` in `.env.geo-publish`, store it through a protected local or manual secret store, and add the env file to `.gitignore`.
+Use a dedicated, least-privilege testnet key. When the user does not have one configured, direct them to [Export Wallet](https://www.geobrowser.io/export-wallet) and tell them to press **Copy key**. Then ask them to put `GEO_PRIVATE_KEY=0x...` in `.env.geo-publish`, store it through a protected local or manual secret store, and add the env file to `.gitignore`.
 
 - Ask the user to create the real env file in an editor or separate terminal you cannot see.
 - Never paste or write the key in chat, command arguments, repository files, fork PR CI, build artifacts, or debug output.
