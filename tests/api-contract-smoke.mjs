@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const API_ENDPOINT = "https://api-testnet.geobrowser.io/graphql";
@@ -366,7 +366,11 @@ async function main() {
   console.log(`Geo API contract smoke passed: ${JSON.stringify(result)}`);
 }
 
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+// Resolve symlinks on both sides so the entry-point check holds when this
+// script is invoked through a symlinked path.
+const isMain =
+  process.argv[1] !== undefined &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
 if (isMain) {
   main().catch((error) => {
     console.error(`Geo API contract smoke failed: ${error.message}`);
