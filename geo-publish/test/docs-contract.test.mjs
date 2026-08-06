@@ -20,7 +20,11 @@ async function readGuidance() {
 }
 
 test("custom scripts install exact direct dependencies and credentials stay out of logs", async () => {
+  const skill = await readFile(resolve(publishRoot, "SKILL.md"), "utf8");
   const guidance = await readGuidance();
+  const credentials = skill.match(
+    /### Credentials\n\n(?<credentials>[\s\S]*?)\n\nThe signer also needs/,
+  )?.groups?.credentials;
 
   assert.match(guidance, /@geoprotocol\/geo-sdk@0\.20\.1/);
   assert.match(guidance, /\bviem\b/);
@@ -28,6 +32,13 @@ test("custom scripts install exact direct dependencies and credentials stay out 
   assert.match(guidance, /dedicated, least-privilege testnet key/i);
   assert.match(guidance, /fork(?:ed)? PR CI/i);
   assert.match(guidance, /rotate/i);
+  assert.ok(credentials, "missing Credentials guidance");
+  assert.match(
+    credentials,
+    /When the user does not have one configured,[\s\S]*https:\/\/www\.geobrowser\.io\/export-wallet[\s\S]*press \*\*Copy key\*\*/,
+  );
+  assert.match(credentials, /protected local or manual secret store/);
+  assert.match(credentials, /Never paste or write the key in chat/);
 });
 
 test("guidance uses configured v0.20 clients, ops, and wallet submission", async () => {
