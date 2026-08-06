@@ -355,8 +355,8 @@ Prefer the SDK's exported constants where possible:
 ```typescript
 import { SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
 
-(SystemIds.PERSON_TYPE, SystemIds.COMPANY_TYPE, SystemIds.PROJECT_TYPE, SystemIds.EVENT_TYPE);
-(ContentIds.ARTICLE_TYPE, ContentIds.TALK_TYPE, ContentIds.PODCAST_TYPE, ContentIds.TOPIC_TYPE);
+(SystemIds.PERSON_TYPE, SystemIds.COMPANY_TYPE, SystemIds.PROJECT_TYPE);
+(ContentIds.ARTICLE_TYPE, ContentIds.NEWS_STORY_TYPE, ContentIds.TOPIC_TYPE);
 ```
 
 Current raw IDs for direct GraphQL queries:
