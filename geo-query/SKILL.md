@@ -350,6 +350,15 @@ For relation types, inspect an entity that uses them — the `type { id name }` 
 
 ## Well-known IDs
 
+Prefer the SDK's exported constants where possible:
+
+```typescript
+import { SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
+
+(SystemIds.PERSON_TYPE, SystemIds.COMPANY_TYPE, SystemIds.PROJECT_TYPE, SystemIds.EVENT_TYPE);
+(ContentIds.ARTICLE_TYPE, ContentIds.TALK_TYPE, ContentIds.PODCAST_TYPE, ContentIds.TOPIC_TYPE);
+```
+
 Current raw IDs for direct GraphQL queries:
 
 | Name            | ID                                 |
@@ -359,8 +368,6 @@ Current raw IDs for direct GraphQL queries:
 | Person          | `7ed45f2bc48b419e8e4664d5ff680b0d` |
 | Project         | `484a18c5030a499cb0f2ef588ff16d50` |
 | News story      | `e550fe517e904b2c8fffdf13408f5634` |
-
-For a rich lookup fixture with values, relations, types, and space context, use the Geo entity `6b9f649e38b64224927dd66171343730` in the root Geo space `a19c345ab9866679b001d7d2138d88a1`.
 
 Well-known space IDs and additional type IDs live in `reference.md`.
 
