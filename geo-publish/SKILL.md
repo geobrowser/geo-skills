@@ -1,417 +1,320 @@
 ---
 name: geo-publish
-description: Publish entities and relations to the Geo knowledge graph via the GRC-20 SDK. Use when creating, updating, or deleting entities and relations. Triggers on "publish", "create entity", "add person", "add to geo", "submit proposal", "create relation", "update entity".
+description: Publish entities and relations to the Geo knowledge graph with Geo SDK 0.20.1. Use when creating, updating, or deleting entities and relations, publishing personal-space edits, or proposing DAO-space edits.
 metadata:
   author: geobrowser
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Geo Knowledge Graph — Publishing
 
-Create, update, and delete entities and relations in the Geo knowledge graph using `@geoprotocol/geo-sdk`.
+Publish testnet entities, relations, images, and edits with `@geoprotocol/geo-sdk@0.20.1` and Contracts V2.
 
 ## When to apply
 
-Use this skill when the user wants to:
+Use this skill to:
 
-- Create new entities (people, companies, events, articles, …).
-- Add relations between entities (work history, speakers, authors, …).
-- Update or delete entities / relations.
-- Submit an edit to a personal space or propose one to a DAO space.
+- Create or update entities and relations.
+- Delete a relation or delete an entity within one space.
+- Publish an edit to a personal space.
+- Propose, vote on, and execute an edit in a DAO space.
+
+This skill is testnet-only and latest-only. Do not add an old-SDK or old-endpoint fallback.
 
 ## Prerequisites
 
-The user's project needs **no dependencies installed**. All SDK packages live inside this skill's own directory (`<skill-dir>/node_modules/`), and the shipped CLIs (`bin/whoami.mjs`, `bin/publish-entity.mjs`) plus any ad-hoc scripts are run against that location.
+### Shipped CLIs
 
-- **Skill dependencies (one-time, inside the skill dir)**: if `<skill-dir>/node_modules/` is missing, install once. Resolve `<skill-dir>` from the path of this SKILL.md file, then:
-  ```bash
-  (cd <skill-dir> && bun install)   # or: (cd <skill-dir> && npm install)
-  ```
-  Idempotent — subsequent runs finish in <1s.
-- **Wallet key**: the user places `GEO_PRIVATE_KEY=0x...` in a file named **`.env.geo-publish`** at the **user project** root, and adds the filename to `.gitignore`. Export the key from <https://www.geobrowser.io/export-wallet>. Scripts read it via `--env-file`.
-  - **Never suggest commands that put the key in the transcript.** Do NOT tell the user to run `! echo 'GEO_PRIVATE_KEY=0x...' > .env.geo-publish`, to `export GEO_PRIVATE_KEY=...` inside the session, or to paste the key into chat. The `!` prefix and shell output both land in the conversation history.
-  - **Never suggest `export`.** The Bash tool spawns a fresh shell each call and won't inherit environment variables set in the user's interactive shell.
-  - **The correct handoff**: ask the user to create `.env.geo-publish` themselves — in their editor or a separate terminal you can't see — with a single line `GEO_PRIVATE_KEY=0x...`, and to reply "done" when ready. Then continue. You may offer to create a `.env.geo-publish.example` file (with a placeholder value) and update `.gitignore` on their behalf; never write the real file.
-- **DAO editor rights**: only needed when publishing to a DAO space (not personal spaces).
-- **Runtime**: Node 20.6+ or Bun — both natively support `--env-file`. Shipped scripts are plain `.mjs`, so no TypeScript runtime is needed.
-  - Node: `node --env-file=.env.geo-publish <skill-dir>/bin/<script>.mjs`
-  - Bun: `bun  --env-file=.env.geo-publish run <skill-dir>/bin/<script>.mjs`
+The shipped `bin/whoami.mjs` and `bin/publish-entity.mjs` resolve dependencies from this skill directory. Install them once:
 
-## Quickstart (first publish in one script)
+```bash
+(cd <skill-dir> && bun install --frozen-lockfile)
+```
 
-Use this when the user just wants to try the skill and hasn't set up identity yet. It bootstraps everything from only `GEO_PRIVATE_KEY`.
-
-### 0. Ask the user to create `.env.geo-publish`
-
-If the file doesn't exist, tell the user (verbatim is fine):
-
-> Create a file at the project root called `.env.geo-publish` with one line: `GEO_PRIVATE_KEY=0x...`. Export your key from https://www.geobrowser.io/export-wallet. Use your editor or a separate terminal — don't use `!` here, since that would put the key in this conversation. Reply "done" when ready.
-
-You can proactively create `.gitignore` entries and a `.env.geo-publish.example` placeholder for them, but **never write the real key yourself**.
-
-### 1. Discover identity — `bin/whoami.mjs`
-
-`<skill-dir>/bin/whoami.mjs` derives from the private key:
-
-- **wallet address** (smart account)
-- **personal space ID** — doubles as the `author` value for every publish
-- **DAO spaces you can publish to** (editor role)
-
-Run it once from the user's project directory and show the output so they can pick a target space:
+Run them from the user's project with Node 20.6+ or Bun:
 
 ```bash
 node --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs
-# or: bun --env-file=.env.geo-publish run <skill-dir>/bin/whoami.mjs
+node --env-file=.env.geo-publish <skill-dir>/bin/publish-entity.mjs --name "Ada Lovelace" --type PERSON_TYPE
 ```
 
-Expected output:
+### Custom project scripts
 
-```
-Wallet address : 0xAbC...
-Personal space : 003eaa9b7a56fa847afd6f2e8cc518a6
-Author (pass as `author`): 003eaa9b7a56fa847afd6f2e8cc518a6
+Node ESM resolves packages from the script's project; it does not resolve them from an environment module-path override. A custom `.mjs` or `.ts` script must install its own exact SDK and direct `viem` dependency:
 
-Spaces you can publish to as editor:
-  - 003eaa9b7a56fa847afd6f2e8cc518a6  [PERSONAL]  (your own)
-  - 0222c93092ed08632f958aa84b3b0be6  [DAO]  Crypto
+```bash
+npm install --save-exact @geoprotocol/geo-sdk@0.20.1 viem@2.37.6
+# or: bun add --exact @geoprotocol/geo-sdk@0.20.1 viem@2.37.6
 ```
 
-If the personal-space row is `(none — create one before publishing)`, call `personalSpace.createSpace()` first (see `reference.md`).
+### Credentials
 
-### 2. Confirm the plan with the user (one message)
+Use a dedicated, least-privilege testnet key. Put `GEO_PRIVATE_KEY=0x...` in `.env.geo-publish`, store it through a protected local or manual secret store, and add the env file to `.gitignore`.
 
-Before writing or running a publish script, surface your assumptions in ONE short message and wait for confirmation. Use this template:
+- Ask the user to create the real env file in an editor or separate terminal you cannot see.
+- Never paste or write the key in chat, command arguments, repository files, fork PR CI, build artifacts, or debug output.
+- Never print the key, a secret-bearing URL, or an error that has not been redacted.
+- Rotate the key immediately after actual or suspected exposure.
 
-> Ready to publish:
->
-> - **Space**: `<personal space ID>` (your personal space) — change? (paste a DAO space ID from above to override)
-> - **Name**: "<name the user gave>"
-> - **Type**: `<SystemIds.XXX_TYPE>` (`Person`, `Project`, …) or `SystemIds.DEFAULT_TYPE` for a generic entity — change?
-> - **Description**: <either "(none)" or a one-sentence draft ending with a period> — change?
->
-> Reply "go" or tell me what to change.
+The signer also needs a personal space. DAO work additionally requires the intended editor or voting authorization for the target DAO space.
 
-Pick a type by matching the entity name where possible (a name like "Acme Inc." → `COMPANY_TYPE`; a person's name → `PERSON_TYPE`; something ambiguous → `DEFAULT_TYPE`). Don't invent a description the user didn't ask for — offer `(none)` as the default and let them add one if they want.
+## Quickstart
 
-Only proceed to write the script after the user confirms.
+### 1. Discover the signer and spaces
 
-### 3. Publish — `bin/publish-entity.mjs` (no script needed)
+```bash
+node --env-file=.env.geo-publish <skill-dir>/bin/whoami.mjs
+```
 
-For a simple "create one entity" request, use the shipped CLI instead of writing a script:
+The command prints the signer address, personal space ID, and editable spaces. The personal space ID is both the usual personal-space target and the `author` for an edit.
+
+If no personal space exists, create one with the configured client's `geo.personalSpaces.create(...)` workflow before publishing. See `reference.md`.
+
+### 2. Confirm intent
+
+Before a write, confirm the target space, entity name, type, description, and whether the target is personal or DAO-governed. For a DAO write, also confirm the current voting settings and authorization.
+
+### 3. Publish a simple entity
 
 ```bash
 node --env-file=.env.geo-publish <skill-dir>/bin/publish-entity.mjs \
   --name "Ada Lovelace" \
   --description "A 19th-century mathematician." \
   --type PERSON_TYPE
-# --space-id and --author default to the wallet's personal space
-# --dry-run prints ops count and exits without submitting
 ```
 
-Known `--type` values: `DEFAULT_TYPE`, `PERSON_TYPE`, `COMPANY_TYPE`, `PROJECT_TYPE`, `EVENT_TYPE`, `INSTITUTION_TYPE`, `ROLE_TYPE`, `ARTICLE_TYPE`, `TALK_TYPE`, `PODCAST_TYPE`, `EPISODE_TYPE`, `TOPIC_TYPE`, `SKILL_TYPE`. The CLI validates the name-no-period / description-must-end-with-period rules for you.
+Omit `--type` to use `SystemIds.DEFAULT_TYPE`. The eight supported categories are `DEFAULT`, `PERSON`, `COMPANY`, `PROJECT`, `ROLE`, `ARTICLE`, `TOPIC`, and `SKILL`; the CLI spells their values `DEFAULT_TYPE`, `PERSON_TYPE`, `COMPANY_TYPE`, `PROJECT_TYPE`, `ROLE_TYPE`, `ARTICLE_TYPE`, `TOPIC_TYPE`, and `SKILL_TYPE`.
 
-`author` defaults to the wallet's personal space ID (never a Person entity ID) — `--author` is only needed if overriding.
+Use `--dry-run` to inspect the operation count and IDs without creating a transaction.
 
-### 4. Complex publishes — custom script that imports from the skill
-
-Relations, updates, multi-op edits, text blocks, images: write a `.mjs` script in the user's project and run it with `NODE_PATH` pointing at the skill's `node_modules` so imports resolve without a local install:
-
-```bash
-NODE_PATH=<skill-dir>/node_modules node --env-file=.env.geo-publish publish-something.mjs
-# Bun respects NODE_PATH too.
-```
-
-See `examples/create-entity.md`, `examples/create-relation.md`, `examples/update-entity.md` for patterns. All examples are `.mjs`-compatible (plain ESM) — strip the TypeScript type annotations if you copy from them for a `.mjs` file.
-
-## The three-step workflow
-
-Every publish follows the same flow:
-
-```
-1. Discover schema  (query an existing entity of the same type)
-2. Build ops        (Graph.createEntity, Graph.createRelation, ...)
-3. Submit           (personalSpace.publishEdit + wallet.sendTransaction,
-                     or daoSpace.proposeEdit + voteProposal)
-```
-
-### Step 1 — Discover the schema
-
-Before creating an entity of a type you haven't worked with, **query an existing one** to learn its property IDs and relation type IDs. The `geo-query` skill covers this in depth; the minimum:
+## Canonical SDK setup
 
 ```typescript
-const res = await fetch("https://testnet-api.geobrowser.io/graphql", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    query: `{
-    entities(typeId: "TYPE_ID", first: 1) {
-      id name
-      values(first: 50) { nodes { property { id name } text date boolean decimal } }
-      relations(first: 50) { nodes { type { id name } toEntity { id name } } }
-    }
-  }`,
-  }),
-});
-const { data } = await res.json();
-// data.entities is a flat array; read property IDs, relation type IDs, toEntity classification IDs
+import {
+  ContentIds,
+  createGeoClient,
+  createGeoWalletClient,
+  GeoTestnetConfig,
+  Ops,
+  Position,
+  SystemIds,
+  TextBlock,
+  type Op,
+} from "@geoprotocol/geo-sdk";
+import { privateKeyToAccount } from "viem/accounts";
+
+const raw = process.env.GEO_PRIVATE_KEY;
+if (!raw) throw new Error("GEO_PRIVATE_KEY is not set");
+const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+const signer = privateKeyToAccount(privateKey);
+
+const geo = createGeoClient({ network: GeoTestnetConfig });
+const wallet = await createGeoWalletClient({ signer, network: GeoTestnetConfig });
 ```
 
-Don't guess property/relation IDs. Schemas drift.
+Use `GeoTestnetConfig` as the authority for the API origin, chain, sponsorship route, and contract addresses. Do not copy those values into publishing code.
 
-### Step 2 — Build ops
+## Build operations
 
-All SDK methods return `{ id, ops }`. **Collect every op into a single `allOps: Op[]` array and publish ONCE.** Publishing in a loop creates duplicate edits and inconsistent state.
+Pure operation builders return `{ id, ops }`. Accumulate `Op[]` and publish once:
 
 ```typescript
-import { Graph, TextBlock, Position, SystemIds, ContentIds } from "@geoprotocol/geo-sdk";
-import type { Op } from "@geoprotocol/grc-20";
-
 const allOps: Op[] = [];
 
-// Create an entity
-const { id: entityId, ops: entityOps } = Graph.createEntity({
-  name: "Ada Lovelace", // MUST NOT end with a period
-  description: "A 19th-century mathematician.", // MUST end with a period
-  types: [SystemIds.PERSON_TYPE], // at least one type
+const entity = Ops.entities.create({
+  name: "Ada Lovelace",
+  description: "A 19th-century mathematician.",
+  types: [SystemIds.PERSON_TYPE],
   values: [
-    { property: BIRTH_DATE_PROP, type: "date", value: "1815-12-10" },
     {
       property: ContentIds.WEB_URL_PROPERTY,
-      type: "url",
+      type: "text",
       value: "https://en.wikipedia.org/wiki/Ada_Lovelace",
     },
   ],
 });
-allOps.push(...entityOps);
+allOps.push(...entity.ops);
 
-// Add a relation
-const { ops: relOps } = Graph.createRelation({
-  fromEntity: entityId,
-  toEntity: TOPIC_MATHEMATICS_ID,
+const topicRelation = Ops.relations.create({
+  fromEntity: entity.id,
+  toEntity: TOPIC_ID,
   type: ContentIds.TOPICS_PROPERTY,
 });
-allOps.push(...relOps);
+allOps.push(...topicRelation.ops);
 ```
 
-### Step 3 — Submit
+Use these current builders:
 
-Both variants return `{ to, calldata, ... }`. You submit the transaction yourself via the smart-account wallet.
+- `Ops.entities.create(...)` and `Ops.entities.update(...)`.
+- `Ops.relations.create(...)`, `Ops.relations.update(...)`, and `Ops.relations.delete(...)`.
+- `geo.entities.delete(...)` for entity deletion because it must read the current state in a specific space.
 
-**Normalize the private key.** Users often paste the key without the `0x` prefix; the SDK then throws a cryptic `invalid private key, expected hex or 32 bytes, got string`. Always prepend `0x` if missing:
+Do not guess an unexported property ID. Discover the schema with `geo-query`, assign the returned ID to a clearly named placeholder such as `BIRTH_DATE_PROPERTY_ID`, and record its source space.
 
-```typescript
-const raw = process.env.GEO_PRIVATE_KEY;
-if (!raw) throw new Error("GEO_PRIVATE_KEY not set. Create .env.geo-publish at the project root.");
-const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
-```
-
-**Personal space (instant publish):**
+## Publish to a personal space
 
 ```typescript
-import { personalSpace, getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
-
-const wallet = await getSmartAccountWalletClient({ privateKey });
-
-const { editId, cid, to, calldata } = await personalSpace.publishEdit({
+const { editId, cid, to, calldata } = await geo.personalSpaces.publishEdit({
   name: "Add Ada Lovelace",
-  spaceId: PERSONAL_SPACE_ID, // target space (usually your personal space)
+  spaceId: PERSONAL_SPACE_ID,
   ops: allOps,
-  author: PERSONAL_SPACE_ID, // ALWAYS your personal space ID, not a Person entity
-  network: "TESTNET",
+  author: PERSONAL_SPACE_ID,
 });
+
 const txHash = await wallet.sendTransaction({ to, data: calldata });
 ```
 
-**DAO space (propose + vote):**
+An empty operation list is invalid. Treat an empty list from a conditional workflow as a no-op instead of calling the publish method.
 
-`daoSpace.proposeEdit` returns the proposal calldata; submit it, then (optionally) vote. With `votingMode: "FAST"` and enough editor approvals, the proposal auto-executes.
+## Propose, vote, and execute in a DAO space
+
+First query the DAO space's `spaceVotingSetting`, editors, and active proposal data. Contracts V2 identifies the caller and DAO with space IDs; callers do not supply a DAO contract address.
 
 ```typescript
-import { daoSpace, getSmartAccountWalletClient } from "@geoprotocol/geo-sdk";
-
-const wallet = await getSmartAccountWalletClient({ privateKey }); // normalize as above
-
-const { proposalId, editId, cid, to, calldata } = await daoSpace.proposeEdit({
+const proposal = await geo.daoSpaces.proposeEdit({
   name: "Add Ada Lovelace",
   ops: allOps,
-  author: PERSONAL_SPACE_ID, // still the user's personal space ID
-  daoSpaceAddress: "0x..." as `0x${string}`, // DAO space contract address
-  callerSpaceId: "0x..." as `0x${string}`, // your personal space ID as bytes16 hex
-  daoSpaceId: "0x..." as `0x${string}`, // DAO space ID as bytes16 hex
-  votingMode: "FAST",
-  network: "TESTNET",
+  author: PERSONAL_SPACE_ID,
+  callerSpaceId: PERSONAL_SPACE_ID,
+  daoSpaceId: DAO_SPACE_ID,
+  votingMode: "SLOW",
 });
-const proposeTxHash = await wallet.sendTransaction({ to, data: calldata });
 
-// Then vote (not needed if the proposal auto-executes on propose):
-const vote = await daoSpace.voteProposal({
-  proposalId,
-  daoSpaceAddress: "0x..." as `0x${string}`,
+const proposeTxHash = await wallet.sendTransaction({
+  to: proposal.to,
+  data: proposal.calldata,
+});
+
+const vote = geo.daoSpaces.voteProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
+  versionId: proposal.versionId,
   vote: "YES",
 });
+
 const voteTxHash = await wallet.sendTransaction({ to: vote.to, data: vote.calldata });
-```
 
-## Entity rules
-
-- **Names must NOT end with a period.** `"Ada Lovelace"`, not `"Ada Lovelace."`.
-- **Descriptions MUST end with a period.** Full sentences.
-- **Dates** use type `"date"` with `YYYY-MM-DD`. Year-only: use `YYYY-01-01`.
-- **Datetimes** use type `"datetime"` with `YYYY-MM-DDTHH:MM:SSZ`.
-- **URLs** use type `"url"` for website properties; social handles are `"text"` with just the handle (`"alice"`, not `"https://twitter.com/alice"`).
-- **Text blocks**: one paragraph per `TextBlock`. The UI drops everything after the first `\n\n`.
-- **Batch size**: soft limit ~10,000 ops per proposal.
-
-## Value types reference
-
-| SDK `type` | Example `value`                              |
-| ---------- | -------------------------------------------- |
-| `text`     | `"any string"`                               |
-| `date`     | `"2024-03-15"`                               |
-| `datetime` | `"2024-03-15T14:30:00Z"`                     |
-| `time`     | `"14:30:00"`                                 |
-| `integer`  | `42`                                         |
-| `float`    | `3.14`                                       |
-| `decimal`  | `"123.456789"` (string, arbitrary precision) |
-| `boolean`  | `true`                                       |
-| `url`      | `"https://example.com"`                      |
-
-## Relations
-
-### Basic relation
-
-```typescript
-const { ops } = Graph.createRelation({
-  fromEntity: personId,
-  toEntity: companyId,
-  type: SystemIds.WORKS_AT_PROPERTY,
-  toSpace: companySpaceId, // only if target is in a different space
+// After the matching proposal version reaches endTime with a passing tally,
+// and before executeBy, execute it explicitly.
+const execution = geo.daoSpaces.executeProposal({
+  authorSpaceId: PERSONAL_SPACE_ID,
+  spaceId: DAO_SPACE_ID,
+  proposalId: proposal.proposalId,
 });
-allOps.push(...ops);
-```
-
-### Relation-as-entity (relation with its own properties)
-
-Relations can carry properties and sub-relations — this is how "Worked at" entries get start/end dates and role classifications.
-
-**Use a deterministic ID** so reruns don't create duplicates:
-
-```typescript
-const relEntityId = `${personId.slice(0, 16)}${companyId.slice(0, 16)}`;
-
-const { ops } = Graph.createRelation({
-  fromEntity: personId,
-  toEntity: companyId,
-  type: SystemIds.WORKED_AT_PROPERTY,
-  toSpace: companySpaceId,
-  entityId: relEntityId,
-  entityName: "Senior Engineer at Acme",
-  entityValues: [
-    { property: SystemIds.START_DATE_PROPERTY, type: "date", value: "2022-03-01" },
-    { property: SystemIds.END_DATE_PROPERTY, type: "date", value: "2024-11-30" },
-  ],
-  entityRelations: {
-    [ContentIds.ROLES_PROPERTY]: { toEntity: ENGINEER_ROLE_ID, toSpace: rolesSpaceId },
-  },
+const executionTxHash = await wallet.sendTransaction({
+  to: execution.to,
+  data: execution.calldata,
 });
-allOps.push(...ops);
 ```
 
-### Ordered collections
+Retain `proposalId` and `versionId`. In the API, read `currentVersion` and the matching entry in `proposalVersions`; a vote must target the intended version. Before `executeProposal`, require that version's voting window to have ended, its tally to pass, and `executeBy` to remain in the future. Do not assume fast-path eligibility or fixed thresholds—read the target space's current settings.
 
-Use `Position` for fractional indexing when order matters (e.g. blocks in a page):
-
-```typescript
-import { Position } from "@geoprotocol/geo-sdk";
-
-let lastPos: string | null = null;
-lastPos = Position.generateBetween(lastPos, null); // first: "a"
-// ... createRelation with `position: lastPos` ...
-lastPos = Position.generateBetween(lastPos, null); // next: "n"
-```
-
-## Updates and deletes
+## Updates and deletion
 
 ```typescript
-// Update properties (add/change values)
-const { ops } = Graph.updateEntity({
+const update = Ops.entities.update({
   id: entityId,
-  values: [{ property: propId, type: "text", value: "new value" }],
-  unset: [{ property: oldPropId }], // clear a value
+  values: [{ property: WEBSITE_PROPERTY_ID, type: "text", value: "https://example.com" }],
+  unset: [{ property: OLD_PROPERTY_ID }],
 });
 
-// Delete a relation — use the EDGE id from the GraphQL `id` field, NOT `entityId`
-const { ops } = Graph.deleteRelation({ id: relationEdgeId });
-
-// Delete an entity
-const { ops } = Graph.deleteEntity({ id: entityId });
+const move = Ops.relations.update({ id: relationId, position: Position.generate() });
+const removeRelation = Ops.relations.delete({ id: relationId });
 ```
 
-## Adding images
+Entity deletion is asynchronous and space-scoped. It reads the current entity values and relations in the target space and may return no operations when the entity is absent:
 
 ```typescript
-// Upload to IPFS via SDK
-const { id: imageId, ops: imageOps } = await Graph.createImage({
-  url: "https://example.com/ada.png",
-  name: "Ada Lovelace portrait",
-  network: "TESTNET",
-});
-allOps.push(...imageOps);
-
-// Attach as avatar
-const { ops: avatarOps } = Graph.createRelation({
-  fromEntity: personId,
-  toEntity: imageId,
-  type: ContentIds.AVATAR_PROPERTY,
-});
-allOps.push(...avatarOps);
+const { ops: deleteOps } = await geo.entities.delete({ id: entityId, spaceId });
+if (deleteOps.length === 0) {
+  console.log("Nothing to delete in this space");
+} else {
+  const { to, calldata } = await geo.personalSpaces.publishEdit({
+    name: "Delete entity",
+    spaceId,
+    author: PERSONAL_SPACE_ID,
+    ops: deleteOps,
+  });
+  await wallet.sendTransaction({ to, data: calldata });
+}
 ```
 
-## Adding text blocks (bios, body content)
+This only describes deletion within `spaceId`. Make no assumption about copies or references in other spaces.
 
-Each paragraph is its own block:
+## Text blocks and ordered relations
+
+`TextBlock.make(...)` returns `Op[]` directly. Generate positions explicitly:
 
 ```typescript
-import { TextBlock, Position } from "@geoprotocol/geo-sdk";
-
-const { ops: b1Ops, position: p1 } = TextBlock.make({
+const firstPosition = Position.generate();
+const firstBlockOps = TextBlock.make({
   fromId: entityId,
   text: "First paragraph.",
-  position: Position.default(),
+  position: firstPosition,
 });
-allOps.push(...b1Ops);
 
-const { ops: b2Ops } = TextBlock.make({
+const secondPosition = Position.generateBetween(firstPosition, null);
+const secondBlockOps = TextBlock.make({
   fromId: entityId,
   text: "Second paragraph.",
-  position: Position.after(p1),
+  position: secondPosition,
 });
-allOps.push(...b2Ops);
+
+allOps.push(...firstBlockOps, ...secondBlockOps);
 ```
 
-## Critical gotchas — quick reference
+Use one paragraph per block.
 
-1. **Collect all ops, publish once.** Never publish inside a loop — creates duplicate edits and partial state.
-2. **Names no period, descriptions must end with period.** The UI enforces this.
-3. **Use the edge `id` to delete relations**, not the relation's `entityId`. Mixing them up silently fails or deletes the wrong thing.
-4. **Deterministic IDs for relation entities** — `slice(from) + slice(to)` so reruns are idempotent.
-5. **Discover schema before publishing** — don't hardcode property/relation IDs for types you haven't inspected.
-6. **Target space matters.** If `toEntity` lives in a different space than `fromEntity`, set `toSpace`.
-7. **Wallet must be an editor** of a DAO space before you can propose.
-8. **`getSmartAccountWalletClient`** is the canonical wallet. Don't try to sign ops yourself.
+## Images
 
-## Personal vs DAO spaces
+```typescript
+const image = await geo.images.create({
+  url: "https://example.com/ada.png",
+  name: "Ada Lovelace portrait",
+  description: "A portrait of Ada Lovelace.",
+});
+allOps.push(...image.ops);
+```
 
-|            | Personal space                | DAO space                                        |
-| ---------- | ----------------------------- | ------------------------------------------------ |
-| Publishing | Instant (`publishEdit`)       | Proposal + vote (`proposeEdit` → `voteProposal`) |
-| Access     | Your wallet is the sole owner | Must be an editor; vote threshold 51%            |
-| Voting     | None                          | 24h slow path, or fast path (1 editor approval)  |
-| Use for    | Experiments, personal data    | Shared curated spaces (Crypto, AI, etc.)         |
+Attach the image entity with `Ops.relations.create(...)` and an exported relation ID such as `ContentIds.AVATAR_PROPERTY`.
+
+## Typed values
+
+URLs are text values. Decimal values carry an exponent plus either an `i64` bigint mantissa or a big-endian byte mantissa. Time and datetime strings include a timezone.
+
+```typescript
+const values = [
+  { property: WEBSITE_PROPERTY_ID, type: "text", value: "https://example.com" },
+  {
+    property: PRICE_PROPERTY_ID,
+    type: "decimal",
+    exponent: -2,
+    mantissa: { type: "i64", value: 12345n },
+  },
+  { property: OPENING_TIME_PROPERTY_ID, type: "time", value: "14:30:00Z" },
+  {
+    property: EVENT_START_PROPERTY_ID,
+    type: "datetime",
+    value: "2026-07-30T14:30:00+02:00",
+  },
+] as const;
+```
+
+Every placeholder above must come from schema discovery unless the SDK exports that exact property ID.
+
+## Error and safety checks
+
+- Fail before any network call when the key is missing or malformed.
+- Verify the target is testnet and the transaction destination matches `GeoTestnetConfig` before submitting.
+- Treat API transport failures, GraphQL errors, missing response data, authorization failures, and sponsorship failures as different errors.
+- Never turn an authorization or sponsorship failure into a skipped write.
+- Submit each transaction once, record the transaction hash and edit/proposal IDs, and verify indexing through the current API.
+- Keep U5-style live writes out of deterministic CI; use a dedicated testnet key in a protected manual release environment.
 
 ## More
 
-- `reference.md` — full SDK surface (all constants, ops types, wallet setup).
-- `examples/create-entity.md` — end-to-end: create a Person, publish to a personal space.
-- `examples/create-relation.md` — add a "Worked at" relation entity with dates and roles.
-- `examples/update-entity.md` — update and unset properties; delete a relation.
+- `reference.md` — current method shapes, IDs, values, governance queries, and troubleshooting.
+- `examples/create-entity.md` — complete personal-space publish.
+- `examples/create-relation.md` — current employment relation with discovered property placeholders.
+- `examples/update-entity.md` — update, relation deletion, and space-scoped entity deletion.

@@ -1,165 +1,176 @@
 #!/usr/bin/env node
-// publish-entity.mjs — one-shot CLI to create a simple entity and publish it
-// to a personal space. For relations, updates, or multi-op edits, write a
-// custom script that imports from this skill's node_modules (see SKILL.md).
-//
-// Run:
-//   node --env-file=.env.geo-publish <skill-dir>/bin/publish-entity.mjs \
-//     --name "Test entity" \
-//     [--description "A one-line description."] \
-//     [--type DEFAULT_TYPE|PERSON_TYPE|COMPANY_TYPE|PROJECT_TYPE|EVENT_TYPE|ARTICLE_TYPE|TOPIC_TYPE] \
-//     [--space-id <uuid>]   (defaults to the wallet's personal space) \
-//     [--author <uuid>]     (defaults to the wallet's personal space) \
-//     [--dry-run]
+// publish-entity.mjs — creates a simple entity and publishes it to a personal space.
+
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { ContentIds, GeoTestnetConfig, Ops, SystemIds } from "@geoprotocol/geo-sdk";
+import { SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis";
 
 import {
-  Graph,
-  SystemIds,
-  ContentIds,
-  personalSpace,
-  getSmartAccountWalletClient,
-} from "@geoprotocol/geo-sdk";
+  assertContractCall,
+  createPublishingRuntime,
+  findPersonalSpaceId,
+  requirePersonalSpaceId,
+  safeErrorMessage,
+} from "./runtime.mjs";
 
-function parseArgs(argv) {
+const EXPECTED_CHAIN_ID = 55516;
+
+export const TYPE_ALIASES = Object.freeze({
+  DEFAULT_TYPE: SystemIds.DEFAULT_TYPE,
+  PERSON_TYPE: SystemIds.PERSON_TYPE,
+  COMPANY_TYPE: SystemIds.COMPANY_TYPE,
+  PROJECT_TYPE: SystemIds.PROJECT_TYPE,
+  ROLE_TYPE: SystemIds.ROLE_TYPE,
+  ARTICLE_TYPE: ContentIds.ARTICLE_TYPE,
+  TOPIC_TYPE: ContentIds.TOPIC_TYPE,
+  SKILL_TYPE: ContentIds.SKILL_TYPE,
+});
+
+class CliUsageError extends Error {}
+
+export function parseArgs(argv) {
   const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const key = a.slice(2);
-    const next = argv[i + 1];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith("--")) continue;
+    const key = argument.slice(2);
+    const next = argv[index + 1];
     if (next === undefined || next.startsWith("--")) {
       out[key] = true;
     } else {
       out[key] = next;
-      i++;
+      index += 1;
     }
   }
   return out;
 }
 
-const TYPE_MAP = {
-  DEFAULT_TYPE: SystemIds.DEFAULT_TYPE,
-  PERSON_TYPE: SystemIds.PERSON_TYPE,
-  COMPANY_TYPE: SystemIds.COMPANY_TYPE,
-  PROJECT_TYPE: SystemIds.PROJECT_TYPE,
-  EVENT_TYPE: SystemIds.EVENT_TYPE,
-  INSTITUTION_TYPE: SystemIds.INSTITUTION_TYPE,
-  ROLE_TYPE: SystemIds.ROLE_TYPE,
-  ARTICLE_TYPE: ContentIds.ARTICLE_TYPE,
-  TALK_TYPE: ContentIds.TALK_TYPE,
-  PODCAST_TYPE: ContentIds.PODCAST_TYPE,
-  EPISODE_TYPE: ContentIds.EPISODE_TYPE,
-  TOPIC_TYPE: ContentIds.TOPIC_TYPE,
-  SKILL_TYPE: ContentIds.SKILL_TYPE,
-};
-
-const args = parseArgs(process.argv.slice(2));
-
-if (!args.name) {
-  console.error(
-    "Usage: publish-entity.mjs --name <string> [--description <string>] [--type <TYPE>] [--space-id <uuid>] [--author <uuid>] [--dry-run]",
-  );
-  console.error(`Known --type values: ${Object.keys(TYPE_MAP).join(", ")}`);
-  process.exit(2);
+function knownTypeAliases() {
+  return Object.keys(TYPE_ALIASES).join(", ");
 }
 
-const typeKey = args.type ?? "DEFAULT_TYPE";
-const typeId = TYPE_MAP[typeKey];
-if (!typeId) {
-  console.error(`Unknown --type "${typeKey}". Known: ${Object.keys(TYPE_MAP).join(", ")}`);
-  process.exit(2);
-}
-
-if (args.name.endsWith(".")) {
-  console.error(`Error: name must NOT end with a period. Got: "${args.name}"`);
-  process.exit(2);
-}
-if (
-  args.description !== undefined &&
-  args.description !== true &&
-  !args.description.endsWith(".")
-) {
-  console.error(`Error: description MUST end with a period. Got: "${args.description}"`);
-  process.exit(2);
-}
-
-const raw = process.env.GEO_PRIVATE_KEY;
-if (!raw) {
-  console.error(
-    "GEO_PRIVATE_KEY not set. Create .env.geo-publish and re-run with --env-file=.env.geo-publish",
-  );
-  process.exit(1);
-}
-const privateKey = raw.startsWith("0x") ? raw : `0x${raw}`;
-
-const wallet = await getSmartAccountWalletClient({ privateKey });
-const address = wallet.account.address;
-
-// Auto-discover personal space if not given.
-async function gql(query) {
-  const res = await fetch("https://testnet-api.geobrowser.io/graphql", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-  const body = await res.json();
-  if (body.errors) throw new Error(JSON.stringify(body.errors));
-  return body.data;
-}
-
-let personalSpaceId = null;
-if (!args["space-id"] || !args.author) {
-  const data = await gql(`{
-    spaces(
-      filter: { type: { is: PERSONAL }, address: { isInsensitive: "${address}" } }
-      first: 1
-    ) { id }
-  }`);
-  personalSpaceId = data.spaces[0]?.id ?? null;
-  if (!personalSpaceId) {
-    console.error(
-      `No personal space found for ${address}. Create one with personalSpace.createSpace() first.`,
+function parsePublishArgs(argv) {
+  const args = parseArgs(argv);
+  if (typeof args.name !== "string" || args.name.length === 0) {
+    throw new CliUsageError(
+      `Usage: publish-entity.mjs --name <string> [--description <string>] [--type <TYPE>] [--space-id <uuid>] [--author <uuid>] [--dry-run]\nKnown --type values: ${knownTypeAliases()}`,
     );
-    process.exit(1);
+  }
+
+  const type = args.type ?? "DEFAULT_TYPE";
+  if (!Object.hasOwn(TYPE_ALIASES, type)) {
+    throw new CliUsageError(`Unknown --type "${type}". Known: ${knownTypeAliases()}`);
+  }
+  if (args.name.endsWith(".")) {
+    throw new CliUsageError(`Error: name must NOT end with a period. Got: "${args.name}"`);
+  }
+  if (
+    args.description !== undefined &&
+    args.description !== true &&
+    !args.description.endsWith(".")
+  ) {
+    throw new CliUsageError(
+      `Error: description MUST end with a period. Got: "${args.description}"`,
+    );
+  }
+
+  return { ...args, type };
+}
+
+export function validateWriteIntent(network, { to, calldata }) {
+  const chainId = network?.chain?.id;
+  if (chainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(
+      `Refusing to publish on chain ${chainId ?? "(missing)"}; expected Geo testnet chain ${EXPECTED_CHAIN_ID}.`,
+    );
+  }
+
+  const registryAddress = network.contracts?.SPACE_REGISTRY_ADDRESS;
+  if (typeof registryAddress !== "string") {
+    throw new Error("Geo testnet configuration is missing SPACE_REGISTRY_ADDRESS.");
+  }
+  assertContractCall({
+    transaction: { to, calldata },
+    expectedTarget: registryAddress,
+    expectedFunctionName: "enter",
+    abi: SpaceRegistryAbi,
+    context: "Publish transaction",
+  });
+}
+
+export async function runPublishEntity({
+  argv = process.argv.slice(2),
+  privateKey = process.env.GEO_PRIVATE_KEY,
+  logger = console,
+  createRuntime = createPublishingRuntime,
+  opsApi = Ops,
+} = {}) {
+  const args = parsePublishArgs(argv);
+  const typeId = TYPE_ALIASES[args.type];
+  const runtime = createRuntime({ privateKey, network: GeoTestnetConfig });
+  const { address, geo, network } = runtime;
+
+  let personalSpaceId = null;
+  if (!args["space-id"] || !args.author) {
+    personalSpaceId = requirePersonalSpaceId(await findPersonalSpaceId(geo, address), address);
+  }
+  const spaceId = args["space-id"] ?? personalSpaceId;
+  const author = args.author ?? personalSpaceId;
+  const { id: entityId, ops } = opsApi.entities.create({
+    name: args.name,
+    description: args.description === true ? undefined : args.description,
+    types: [typeId],
+  });
+
+  if (args["dry-run"]) {
+    const result = { entityId, spaceId, author, name: args.name, type: args.type };
+    logger.log(`[dry-run] would publish ${ops.length} ops`);
+    logger.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  const transaction = await geo.personalSpaces.publishEdit({
+    name: `Add ${args.name}`,
+    spaceId,
+    ops,
+    author,
+  });
+  validateWriteIntent(network, transaction);
+
+  const wallet = await runtime.createWallet();
+  const txHash = await wallet.sendTransaction({
+    to: transaction.to,
+    data: transaction.calldata,
+  });
+  const result = {
+    entityId,
+    editId: transaction.editId,
+    cid: transaction.cid,
+    txHash,
+    url: `https://www.geobrowser.io/space/${spaceId}/${entityId}`,
+  };
+  logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+export async function mainPublishEntity({
+  argv = process.argv.slice(2),
+  privateKey = process.env.GEO_PRIVATE_KEY,
+  logger = console,
+  ...options
+} = {}) {
+  try {
+    await runPublishEntity({ ...options, argv, privateKey, logger });
+    return 0;
+  } catch (error) {
+    logger.error(safeErrorMessage(error, privateKey));
+    return error instanceof CliUsageError ? 2 : 1;
   }
 }
-const spaceId = args["space-id"] ?? personalSpaceId;
-const author = args.author ?? personalSpaceId;
 
-const { id: entityId, ops } = Graph.createEntity({
-  name: args.name,
-  description: args.description === true ? undefined : args.description,
-  types: [typeId],
-});
+const isDirectExecution =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (args["dry-run"]) {
-  console.log(`[dry-run] would publish ${ops.length} ops`);
-  console.log(
-    JSON.stringify({ entityId, spaceId, author, name: args.name, type: typeKey }, null, 2),
-  );
-  process.exit(0);
-}
-
-const { editId, cid, to, calldata } = await personalSpace.publishEdit({
-  name: `Add ${args.name}`,
-  spaceId,
-  ops,
-  author,
-  network: "TESTNET",
-});
-
-const txHash = await wallet.sendTransaction({ to, data: calldata });
-
-console.log(
-  JSON.stringify(
-    {
-      entityId,
-      editId,
-      cid,
-      txHash,
-      url: `https://www.geobrowser.io/space/${spaceId}/${entityId}`,
-    },
-    null,
-    2,
-  ),
-);
+if (isDirectExecution) process.exitCode = await mainPublishEntity();

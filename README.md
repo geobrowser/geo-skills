@@ -56,8 +56,8 @@ Both harnesses read markdown instruction files. The simplest path: symlink or co
 
 - **Reads (`geo-query`)**: none — the testnet GraphQL endpoint is public.
 - **Writes (`geo-publish`)**:
-  - `GEO_PRIVATE_KEY` env var — [export from geobrowser.io](https://www.geobrowser.io/export-wallet).
-  - A JS/TS project (Bun or Node). The skill installs `@geoprotocol/geo-sdk` and `@geoprotocol/grc-20` on demand if they're not already dependencies.
+  - `GEO_PRIVATE_KEY` — [export from geobrowser.io](https://www.geobrowser.io/export-wallet) and keep it in a protected, gitignored env file.
+  - Node 20.6+ or Bun. Shipped CLIs use the skill's frozen dependencies; custom scripts install exact `@geoprotocol/geo-sdk@0.20.1` and direct `viem` locally.
   - To propose to a DAO space, your wallet must be an editor of that space.
 
 ## License

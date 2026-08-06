@@ -7,8 +7,8 @@ When a result set might exceed 1000 entries, use `entitiesConnection` with curso
 ```graphql
 {
   entitiesConnection(
-    typeId: "4faff0b210cb49958e20109409b8699c" # Person
-    spaceId: "c9f267dcb0d270718c2a3c45a64afd32" # Crypto space
+    typeId: "7ed45f2bc48b419e8e4664d5ff680b0d" # Person
+    spaceId: "a19c345ab9866679b001d7d2138d88a1" # Root Geo space
     first: 500
     after: "OPTIONAL_CURSOR"
   ) {
@@ -35,13 +35,13 @@ When a result set might exceed 1000 entries, use `entitiesConnection` with curso
 type Entity = { id: string; name: string };
 
 async function fetchAllPersons(spaceId: string): Promise<Entity[]> {
-  const PERSON_TYPE = "4faff0b210cb49958e20109409b8699c";
+  const PERSON_TYPE = "7ed45f2bc48b419e8e4664d5ff680b0d";
   const out: Entity[] = [];
   let cursor: string | null = null;
 
   while (true) {
     const afterClause = cursor ? `after: "${cursor}"` : "";
-    const res = await fetch("https://testnet-api.geobrowser.io/graphql", {
+    const res = await fetch("https://api-testnet.geobrowser.io/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

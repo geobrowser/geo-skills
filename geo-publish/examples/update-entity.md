@@ -1,112 +1,65 @@
-# Example: update properties and delete a relation
+# Example: update and delete in one space
 
-Edits are ops, same as creates. Bundle multiple changes into one publish.
+Updates use pure `Ops` builders. Entity deletion uses the configured client because it reads the entity's current state in the target space.
 
-## Update: add, change, unset values
+## Update values and relations
 
-```typescript
-import {
-  Graph,
-  ContentIds,
-  personalSpace,
-  getSmartAccountWalletClient,
-} from "@geoprotocol/geo-sdk";
-import type { Op } from "@geoprotocol/grc-20";
+```javascript
+import { createGeoClient, GeoTestnetConfig, Ops, Position } from "@geoprotocol/geo-sdk";
 
-const PERSONAL_SPACE_ID = "ffff..."; // from bin/whoami.mjs — doubles as author
-const ENTITY_ID = "aaaa...";
+const geo = createGeoClient({ network: GeoTestnetConfig });
 
-const allOps: Op[] = [];
-
-const { ops: updateOps } = Graph.updateEntity({
+const entityUpdate = Ops.entities.update({
   id: ENTITY_ID,
-  // Overwrite / add values
   values: [
-    { property: ContentIds.WEB_URL_PROPERTY, type: "url", value: "https://new-site.example.com" },
+    {
+      property: WEBSITE_PROPERTY_ID,
+      type: "text",
+      value: "https://new-site.example.com",
+    },
   ],
-  // Clear values
-  unset: [{ property: ContentIds.LINKEDIN_PROPERTY }],
+  unset: [{ property: OLD_LINK_PROPERTY_ID }],
 });
-allOps.push(...updateOps);
 
-const raw = process.env.GEO_PRIVATE_KEY;
-if (!raw) throw new Error("GEO_PRIVATE_KEY not set (create .env.geo-publish).");
-const privateKey = (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
-const wallet = await getSmartAccountWalletClient({ privateKey });
-
-const { to, calldata } = await personalSpace.publishEdit({
-  name: "Update links",
-  spaceId: PERSONAL_SPACE_ID,
-  ops: allOps,
-  author: PERSONAL_SPACE_ID,
-  network: "TESTNET",
+const relationUpdate = Ops.relations.update({
+  id: RELATION_ID,
+  position: Position.generate(),
 });
-await wallet.sendTransaction({ to, data: calldata });
+
+const relationDelete = Ops.relations.delete({ id: OBSOLETE_RELATION_ID });
+
+const allOps = [...entityUpdate.ops, ...relationUpdate.ops, ...relationDelete.ops];
 ```
 
-## Delete a relation — use the EDGE id, not the relation's entityId
+`WEBSITE_PROPERTY_ID` and `OLD_LINK_PROPERTY_ID` must be exported IDs or values discovered from the schema. URLs are stored as `text` values.
 
-Every relation has two IDs. Query before deleting to confirm you're using the right one:
+Publish `allOps` through `geo.personalSpaces.publishEdit(...)` and submit its `to` and `calldata` with the wallet pattern in `create-entity.md`.
 
-```graphql
-{
-  entity(id: "PARENT_ENTITY_ID") {
-    relations(first: 100) {
-      nodes {
-        id # <-- EDGE id — use this to delete
-        entityId # <-- relation-as-entity id — use this to update relation properties
-        type {
-          name
-        }
-        toEntity {
-          id
-          name
-        }
-      }
-    }
-  }
+## Delete an entity within a space
+
+```javascript
+const { ops: deleteOps } = await geo.entities.delete({ id: entityId, spaceId });
+
+if (deleteOps.length === 0) {
+  console.log("Nothing to delete in this space");
+} else {
+  const { to, calldata } = await geo.personalSpaces.publishEdit({
+    name: "Delete entity",
+    spaceId,
+    ops: deleteOps,
+    author: PERSONAL_SPACE_ID,
+  });
+  await wallet.sendTransaction({ to, data: calldata });
 }
 ```
 
-```typescript
-const { ops: delOps } = Graph.deleteRelation({ id: relationEdgeId });
-allOps.push(...delOps);
-```
+The deletion is asynchronous, idempotent when the entity is absent, and scoped to `spaceId`. It does not establish what happens to copies or references in any other space.
 
-## Delete an entity
+For a DAO target, pass the non-empty `deleteOps` through the version-aware proposal, vote, and execution workflow in `create-entity.md`.
 
-```typescript
-const { ops: delOps } = Graph.deleteEntity({ id: entityId });
-allOps.push(...delOps);
-```
+## Failure handling
 
-`Graph.deleteEntity` also removes **incoming relations** (backlinks to the entity), not just outgoing ones.
-
-### Batch delete safety
-
-When deleting many entities at once, share a `deletingIds: Set<string>` across all `deleteEntity` calls so orphan cleanup doesn't:
-
-- Recurse infinitely on cyclic relations (`A → B → C → A`).
-- Double-count relations from siblings that are also being deleted.
-
-If you're only doing one or two deletes, ignore this — it's a batch-job concern.
-
-## Bundling everything
-
-Multiple edits in one publish keeps the edit history readable and costs one proposal instead of many:
-
-```typescript
-const allOps: Op[] = [];
-allOps.push(...updateOps);
-allOps.push(...delRelOps);
-allOps.push(...createOps);
-
-const { to, calldata } = await personalSpace.publishEdit({
-  name: "Reorganize profile",
-  spaceId: PERSONAL_SPACE_ID,
-  ops: allOps,
-  author: PERSONAL_SPACE_ID,
-  network: "TESTNET",
-});
-await wallet.sendTransaction({ to, data: calldata });
-```
+- Do not publish an empty operation list.
+- Stop if the target space does not match the user's confirmed intent.
+- Keep a missing entity in the selected space as a no-op, but treat malformed API data as an error.
+- Treat an unauthorized proposal, sponsorship failure, failed receipt, or indexing timeout as a failure.

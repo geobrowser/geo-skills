@@ -4,8 +4,12 @@
   "private": true,
   "description": "Self-contained dependencies for the geo-publish skill. Install once inside this directory; scripts are invoked from user projects.",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:live": "node --test test/live-testnet.test.mjs"
+  },
   "dependencies": {
-    "@geoprotocol/geo-sdk": "^0.18.0",
-    "@geoprotocol/grc-20": "^0.4.1"
+    "@geoprotocol/geo-sdk": "0.20.1",
+    "viem": "^2.37.6"
   }
 }
