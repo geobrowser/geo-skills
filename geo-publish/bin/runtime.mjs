@@ -1,9 +1,27 @@
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { createGeoClient, createGeoWalletClient, GeoTestnetConfig } from "@geoprotocol/geo-sdk";
 import { decodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const PRIVATE_KEY_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}$/;
 const REQUEST_TIMEOUT_MS = 20_000;
+
+// Returns true when the module identified by `importMetaUrl` is the process
+// entry point. Symlinks are resolved on both sides so the check still holds
+// when the script is invoked through a symlinked path — e.g. `.claude/skills/*`
+// linking into `.agents/skills/*`, where Node resolves the symlink for
+// `import.meta.url` but not for `process.argv[1]`.
+export function isMainModule(importMetaUrl) {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(importMetaUrl));
+  } catch {
+    return false;
+  }
+}
 
 export function normalizePrivateKey(value) {
   if (typeof value !== "string" || value.length === 0) {

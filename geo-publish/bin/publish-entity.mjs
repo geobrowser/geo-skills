@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 // publish-entity.mjs — creates a simple entity and publishes it to a personal space.
 
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { ContentIds, GeoTestnetConfig, Ops, SystemIds } from "@geoprotocol/geo-sdk";
 import { SpaceRegistryAbi } from "@geoprotocol/geo-sdk/abis";
 
@@ -11,6 +8,7 @@ import {
   assertContractCall,
   createPublishingRuntime,
   findPersonalSpaceId,
+  isMainModule,
   requirePersonalSpaceId,
   safeErrorMessage,
 } from "./runtime.mjs";
@@ -170,7 +168,4 @@ export async function mainPublishEntity({
   }
 }
 
-const isDirectExecution =
-  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isDirectExecution) process.exitCode = await mainPublishEntity();
+if (isMainModule(import.meta.url)) process.exitCode = await mainPublishEntity();

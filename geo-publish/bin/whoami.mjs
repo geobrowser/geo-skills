@@ -2,13 +2,11 @@
 // whoami.mjs — derives wallet address, personal space, and editable DAO spaces
 // from GEO_PRIVATE_KEY. No local SDK install is needed in the user's project.
 
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import {
   createPublishingRuntime,
   findEditableSpaces,
   findPersonalSpaceId,
+  isMainModule,
   safeErrorMessage,
 } from "./runtime.mjs";
 
@@ -52,7 +50,4 @@ export async function mainWhoami({
   }
 }
 
-const isDirectExecution =
-  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isDirectExecution) process.exitCode = await mainWhoami();
+if (isMainModule(import.meta.url)) process.exitCode = await mainWhoami();
