@@ -30,6 +30,11 @@ type Entity {
 }
 ```
 
+> **These three fields are where queries get expensive.** Each defaults to 100
+> when you omit `first`, and accepts up to 1000. Selecting them on a large page
+> multiplies: see [Cost multiplies with nesting](#cost-multiplies-with-nesting)
+> before raising any nested `first`.
+
 ### Value
 
 Values are typed — the non-null field is the actual value:
@@ -168,6 +173,67 @@ Same for `valuesConnection`.
 - `proposalVersions` is also a flat list. Votes and tallies are version-aware, so retain both `id` and `proposalVersion`.
 - `spaceVotingSetting` contains the current thresholds, quorum, duration, fast-path restriction, and execution grace period.
 - A passing `SLOW` proposal is executable after its active version's `endTime` and before `executeBy`. Submit the Contracts V2 execution action and verify `executedAt`; a successful vote alone does not publish the edit.
+
+## Cost multiplies with nesting
+
+The server charges you for `root first` x `nested first`, not for the larger of
+the two. This is the single easiest way to take the API down, and it does not
+look dangerous on the page — every individual number is legal.
+
+Measured against the live API, one request, varying only the two page sizes,
+fetching entities of one type with `values`, nested `relations` and `backlinks`
+selected:
+
+| root `first` | nested `relations(first:)` | response    | duration   | server memory |
+| ------------ | -------------------------- | ----------- | ---------- | ------------- |
+| 50           | 1000                       | 3.05 MB     | 6.6 s      | +152 MB       |
+| 100          | 100                        | 5.89 MB     | 5.8 s      | +260 MB       |
+| 500          | 100                        | 29.0 MB     | 18.1 s     | +724 MB       |
+| **1000**     | **1000**                   | **62.9 MB** | **33.3 s** | **+1,569 MB** |
+
+That last row exceeds an API pod's memory limit, so the request does not merely
+run slowly — it kills the process serving it, taking every other in-flight
+request with it. It also exceeds most client timeouts, so the caller retries and
+does it again. This happened in production on 2026-08-19.
+
+Note rows 1 and 3 in particular: `50 x 1000` and `500 x 100` are the same
+product, yet cost 152 MB and 724 MB. Declared limits are upper bounds; what you
+pay for is the rows that actually exist. You cannot predict cost from the numbers
+alone, which is why the guidance below is conservative.
+
+### What to do instead
+
+**Filter nested relations rather than raising `first`.** If you need one relation
+type (the common case — `types`, `topics`, an avatar), ask for that type instead
+of fetching 1000 relations and filtering client-side:
+
+```graphql
+# Good — one relation per node
+relations(filter: { typeId: { is: "8f151ba4de204e3c9cb499ddf96f48f1" } }) {
+  nodes { toEntityId }
+}
+
+# Bad — 1000 relations per node, then you throw ~999 away
+relations(first: 1000) { nodes { toEntityId typeId } }
+```
+
+This is strictly better: it is cheaper _and_ it is correct past 1000 relations,
+where raising `first` silently truncates.
+
+**Select only the value properties you need**, the same way:
+
+```graphql
+values(filter: { propertyId: { is: NAME_PROP_ID } }) { nodes { text } }
+```
+
+**Keep the root page small when nodes are fat.** A root `first` of 1000 is fine
+for `{ id name }`. With `values` + `relations` + `backlinks` selected, stay at
+100 or below — and if you are paginating anyway, a smaller page costs you
+nothing but a few more requests.
+
+**If you are sweeping the whole graph**, expect it to take a while and paginate
+politely. A sweep that completes in 50 small requests is better for everyone than
+one that dies on request 1 at `first: 1000` and retries forever.
 
 ## Filter grammar
 
