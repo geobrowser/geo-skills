@@ -29,7 +29,7 @@ When a result set might exceed 1000 entries, use `entitiesConnection` with curso
   fine for thin selections like the `{ id name }` above. If you also select
   `values`, `relations` or `backlinks`, stay at **100 or below** — cost is
   `first` x nested `first`, and the combination can exhaust the server's memory
-  rather than just running slowly. See *Cost multiplies with nesting* in
+  rather than just running slowly. See _Cost multiplies with nesting_ in
   `reference.md`. Drop to 50 if complex filters trigger 500s.
 - **`after`** — omit on the first request; pass `pageInfo.endCursor` from the previous response on subsequent requests.
 - **`totalCount`** — the full count across all pages, available even on page 1.

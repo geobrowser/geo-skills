@@ -184,12 +184,12 @@ Measured against the live API, one request, varying only the two page sizes,
 fetching entities of one type with `values`, nested `relations` and `backlinks`
 selected:
 
-| root `first` | nested `relations(first:)` | response | duration | server memory |
-|---|---|---|---|---|
-| 50 | 1000 | 3.05 MB | 6.6 s | +152 MB |
-| 100 | 100 | 5.89 MB | 5.8 s | +260 MB |
-| 500 | 100 | 29.0 MB | 18.1 s | +724 MB |
-| **1000** | **1000** | **62.9 MB** | **33.3 s** | **+1,569 MB** |
+| root `first` | nested `relations(first:)` | response    | duration   | server memory |
+| ------------ | -------------------------- | ----------- | ---------- | ------------- |
+| 50           | 1000                       | 3.05 MB     | 6.6 s      | +152 MB       |
+| 100          | 100                        | 5.89 MB     | 5.8 s      | +260 MB       |
+| 500          | 100                        | 29.0 MB     | 18.1 s     | +724 MB       |
+| **1000**     | **1000**                   | **62.9 MB** | **33.3 s** | **+1,569 MB** |
 
 That last row exceeds an API pod's memory limit, so the request does not merely
 run slowly — it kills the process serving it, taking every other in-flight
@@ -217,7 +217,7 @@ relations(filter: { typeId: { is: "8f151ba4de204e3c9cb499ddf96f48f1" } }) {
 relations(first: 1000) { nodes { toEntityId typeId } }
 ```
 
-This is strictly better: it is cheaper *and* it is correct past 1000 relations,
+This is strictly better: it is cheaper _and_ it is correct past 1000 relations,
 where raising `first` silently truncates.
 
 **Select only the value properties you need**, the same way:
