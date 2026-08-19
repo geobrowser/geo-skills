@@ -126,7 +126,10 @@ Values come back as typed fields (`text`, `date`, `boolean`, `decimal`, `integer
   }
 }
 
-# Large/unbounded — use cursor pagination
+# Large/unbounded — use cursor pagination.
+# `first: 500` is safe for THIN nodes like the `{ id name }` below. If you add
+# `values`, `relations` or `backlinks` to the selection, drop to 100 or less —
+# cost is `first` x nested `first` (see gotcha 9).
 {
   entitiesConnection(typeId: "TYPE_ID", spaceId: "SPACE_ID", first: 500) {
     totalCount
@@ -389,6 +392,7 @@ curl -s --compressed 'https://api-testnet.geobrowser.io/graphql' \
 6. **Prefer `none` over `every`** for exclusion logic.
 7. **Values come back as typed fields** (`text`, `date`, `boolean`, …), not a single `value`.
 8. **Relation `id` ≠ `entityId`** — `id` is the edge (for deletion); `entityId` is the relation-as-entity (for relation properties).
+9. **Nesting multiplies cost.** You are charged `first` × nested `first`, not the larger of the two. `entitiesConnection(first: 1000)` with a nested `relations(first: 1000)` returns ~63 MB, takes ~33 s, and can exhaust the server's memory — it took the API down on 2026-08-19. Keep the outer `first` at **100 or below** whenever you select `values`/`relations`/`backlinks`, and filter nested relations by `typeId` rather than raising their `first`. See _Cost multiplies with nesting_ in `reference.md`.
 
 ## More
 
